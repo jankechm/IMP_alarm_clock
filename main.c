@@ -36,12 +36,24 @@ void PinInit(void) {
 }
 
 void UART0Init(void) {
-	UART0->C2 &= ~(UART0_C2_TE_MASK | UART0_C2_RE_MASK);
+	UART0->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Vypnut vysielac a prijimac
 
 	UART0->BDH = 0x00;
-	UART0->BDL = 0x1A;		// Baud rate 115 200 Bd, 1 stop bit
-	UART0->C4 = 0x0F;		// Oversampling ratio 16, match address mode disabled
+	UART0->BDL = 0x1A;						// Baud rate 115 200 Bd
+	UART0->C4 = 0x01;						// Baud rate fine adjust 1/32, match address mode disabled
+	UART0->C1 = 0x00;						// 8 data bitov, bez parity
+	UART0->C2 = (0 | UART_C2_TCIE_MASK);	// transmission complete interrupt enable
+	UART0->C3 = 0x00;
+	UART0->MA1 = 0x00;						// no match address (mode disabled in C4)
+	UART0->MA2 = 0x00;						// no match address (mode disabled in C4)
+	//UART0->S1 |= 0x1F;						// clear IDLE, OR, NF, FE, PF
+	UART0->S2 |= 0xC0;						//clear LBKDIF, RXEDGIF
+
+	UART0->C2 |= ( UART0_C2_TE_MASK | UART0_C2_RE_MASK );	// Zapnut vysielac a prijimac
 }
+
+//UART0_RX_TX_IRQn
+
 /*!
  * @brief Application entry point.
  */
