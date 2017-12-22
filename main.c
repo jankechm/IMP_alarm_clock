@@ -4,11 +4,21 @@
  * Laboratorni uloha c. 1 z predmetu IMP
  **/
 
+#include <string.h>
 //#include "board.h"
 //#include "pin_mux.h"
 //#include "clock_config.h"
 #include "MK60D10.h"
 
+/*
+ * Makra
+ */
+/* Cas pre stabilizaciu oscilatora */
+#define	DELAY_OSC_STAB 0x600000
+
+/*
+ * Typy
+ */
 /* Struktura pouzita na ukladanie casu */
 typedef struct _rtc_time
 {
@@ -17,22 +27,72 @@ typedef struct _rtc_time
     uint8_t second; // Rozsah 0-59
 } *rtc_time_t;
 
-#define	DELAY_OSC_STAB 0x600000
+/*
+ * Prototypy
+ */
+void delay(long long bound);
+void MCUInit(void);
+void PinInit(void);
+void UART0Init(void);
+void RTCInit(void);
+void resetTime(rtc_time_t rtc_time);
+void SendCh(char ch);
+char ReceiveCh(void);
+void SendStr(char *s);
+void beep(void);
 
-/* A delay function */
+/*
+ * Main
+ */
+int main(void) {
+	rtc_time_t time;
+	char recv_str[4];
+	char c;
+	int n;
+
+//  BOARD_InitPins();
+//  BOARD_BootClockRUN();
+//  BOARD_InitDebugConsole();
+	MCUInit();
+	PinInit();
+	UART0Init();
+	RTCInit();
+
+  for(;;) {
+	SendStr("\r\n");
+	SendStr("Prompt");
+	SendStr("\r\n");
+
+	for(n = 0; n < 4; n++) {
+	  c = ReceiveCh();
+		  SendCh(c);		// Prijaty znak se hned vysle - echo linky
+		  recv_str[n]=c;		// Postupne se uklada do pole
+	}
+	beep();
+	SendStr(strcat("\r\nPoslal si ", recv_str));
+  }
+}
+
+/*
+ * Funkcia oneskorenia
+ */
 void delay(long long bound) {
   long long i;
   for(i = 0; i < bound; i++);
 }
 
-/* Inicializacia MCU - zakladne nastavenie hodin, vypnutie watchdogu */
+/*
+ * Inicializacia MCU - zakladne nastavenie hodin, vypnutie watchdogu
+ */
 void MCUInit(void) {
-	MCG_C4 |= ( MCG_C4_DMX32_MASK | MCG_C4_DRST_DRS(0x01) );
-	SIM_CLKDIV1 |= SIM_CLKDIV1_OUTDIV1(0x00);
-	WDOG_STCTRLH &= ~WDOG_STCTRLH_WDOGEN_MASK;
+	MCG->C4 |= ( MCG_C4_DMX32_MASK | MCG_C4_DRST_DRS(0x01) );
+	SIM->CLKDIV1 |= SIM_CLKDIV1_OUTDIV1(0x00);
+	WDOG->STCTRLH &= ~WDOG_STCTRLH_WDOGEN_MASK;
 }
 
-/* Inicializacia pinov pre vysielanie a prijem cez UART*/
+/*
+ * Inicializacia pinov, povolenie hodin
+ */
 void PinInit(void) {
 	SIM->SCGC5 |= SIM_SCGC5_PORTA_MASK;  		// Povolit hodiny pre PORTA
 	SIM->SCGC5 |= SIM_SCGC5_PORTB_MASK;  		// Povolit hodiny pre PORTB
@@ -51,6 +111,9 @@ void PinInit(void) {
 	PTB->PDDR = GPIO_PDDR_PDD(0x0034); 			// PTB3/4/5 bude vystupny
 }
 
+/*
+ * Inicializacia UART0
+ */
 void UART0Init(void) {
 	UART0->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Vypnut vysielac a prijimac
 
@@ -66,9 +129,12 @@ void UART0Init(void) {
 	//UART0->S1 |= 0x1F;						// clear IDLE, OR, NF, FE, PF
 	UART0->S2 |= 0xC0;						//clear LBKDIF, RXEDGIF
 
-	UART0->C2 |= ( UART0_C2_TE_MASK | UART0_C2_RE_MASK );	// Zapnut vysielac a prijimac
+	UART0->C2 |= (UART_C2_TE_MASK | UART_C2_RE_MASK);	// Zapnut vysielac a prijimac
 }
 
+/*
+ * Inicializacia Real Time Counter
+ */
 void RTCInit(void) {
 	//RTC->CR |= RTC_CR_SWR_MASK;				//reset vsetkych RTC registrov
 	RTC->CR = RTC_CR_SWR(0)					//vynulovanie SWR
@@ -79,28 +145,49 @@ void RTCInit(void) {
 	RTC->SR |= RTC_SR_TCE_MASK;				//enable counter
 }
 
-/* Resetovanie casu */
+/*
+ * Resetovanie casu
+ */
 void resetTime(rtc_time_t rtc_time) {
 	rtc_time->hour = 0U;
 	rtc_time->minute = 0U;
 	rtc_time->second = 0U;
 }
 
-
-/*!
- * @brief Application entry point.
+/*
+ * Vysielanie jedneho znaku cez UART
  */
-int main(void) {
-	rtc_time_t time;
+void SendCh(char ch)  {
+    while(!(UART0->S1 & UART_S1_TDRE_MASK) && !(UART0->S1 & UART_S1_TC_MASK));
+    UART0->D = ch;
+}
 
-  /* Init board hardware. */
-//  BOARD_InitPins();
-//  BOARD_BootClockRUN();
-//  BOARD_InitDebugConsole();
+/*
+ * Prijatie jedneho znaku cez UART
+ */
+char ReceiveCh(void) {
+	while(!(UART0->S1 & UART_S1_RDRF_MASK));
+	return UART0->D;
+}
 
-  /* Add your code here */
+/*
+ * Vysielanie retazca ukonceneho 0
+ */
+void SendStr(char *s)  {
+	int i = 0;
+	while (s[i]!=0)
+		{SendCh(s[i++]);}
+}
 
-  for(;;) { /* Infinite loop to avoid leaving the main function */
-    __asm("NOP"); /* something to use as a breakpoint stop while looping */
-  }
+/*
+ * Pipnutie cez bzuciak na PTA4
+ */
+void beep(void) {
+	int q;
+	for (q = 0; q < 500; q++) {
+    	PTA->PDOR = GPIO_PDOR_PDO(0x0010);
+    	delay(500);
+    	PTA->PDOR = GPIO_PDOR_PDO(0x0000);
+    	delay(500);
+    }
 }
