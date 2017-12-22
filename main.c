@@ -4,10 +4,26 @@
  * Laboratorni uloha c. 1 z predmetu IMP
  **/
 
-#include "board.h"
-#include "pin_mux.h"
-#include "clock_config.h"
+//#include "board.h"
+//#include "pin_mux.h"
+//#include "clock_config.h"
 #include "MK60D10.h"
+
+/* Struktura pouzita na ukladanie casu */
+typedef struct _rtc_time
+{
+    uint8_t hour;   // Rozsah 0-23
+    uint8_t minute; // Rozsah 0-59
+    uint8_t second; // Rozsah 0-59
+} *rtc_time_t;
+
+#define	DELAY_OSC_STAB 0x600000
+
+/* A delay function */
+void delay(long long bound) {
+  long long i;
+  for(i = 0; i < bound; i++);
+}
 
 /* Inicializacia MCU - zakladne nastavenie hodin, vypnutie watchdogu */
 void MCUInit(void) {
@@ -43,6 +59,7 @@ void UART0Init(void) {
 	UART0->C4 = 0x01;						// Baud rate fine adjust 1/32, match address mode disabled
 	UART0->C1 = 0x00;						// 8 data bitov, bez parity
 	UART0->C2 = (0 | UART_C2_TCIE_MASK);	// transmission complete interrupt enable
+	NVIC_EnableIRQ(UART0_RX_TX_IRQn);		// Enable UART0 receive/transmit interrupt
 	UART0->C3 = 0x00;
 	UART0->MA1 = 0x00;						// no match address (mode disabled in C4)
 	UART0->MA2 = 0x00;						// no match address (mode disabled in C4)
@@ -52,16 +69,34 @@ void UART0Init(void) {
 	UART0->C2 |= ( UART0_C2_TE_MASK | UART0_C2_RE_MASK );	// Zapnut vysielac a prijimac
 }
 
-//UART0_RX_TX_IRQn
+void RTCInit(void) {
+	//RTC->CR |= RTC_CR_SWR_MASK;				//reset vsetkych RTC registrov
+	RTC->CR = RTC_CR_SWR(0)					//vynulovanie SWR
+	RTC->TCR = RTC_TCR_CIR(0);				//clear compensation interval
+	RTC->TCR = RTC_TCR_TCR(0);				//clear compensation time
+	RTC->CR |= RTC_CR_OSCE_MASK;			//enable oscillator
+	delay(DELAY_OSC_STAB);					//cakanie na stabilizaciu oscilatora
+	RTC->SR |= RTC_SR_TCE_MASK;				//enable counter
+}
+
+/* Resetovanie casu */
+void resetTime(rtc_time_t rtc_time) {
+	rtc_time->hour = 0U;
+	rtc_time->minute = 0U;
+	rtc_time->second = 0U;
+}
+
 
 /*!
  * @brief Application entry point.
  */
 int main(void) {
+	rtc_time_t time;
+
   /* Init board hardware. */
-  BOARD_InitPins();
-  BOARD_BootClockRUN();
-  BOARD_InitDebugConsole();
+//  BOARD_InitPins();
+//  BOARD_BootClockRUN();
+//  BOARD_InitDebugConsole();
 
   /* Add your code here */
 
