@@ -30,13 +30,12 @@ typedef struct _rtc_time
 void delay(long long bound);
 void MCUInit(void);
 void PinInit(void);
-void UART0Init(void);
-void UART5Init(void);
+void UARTInit(UART_Type *base);
 void RTCInit(void);
 void resetTime(rtc_time_t rtc_time);
-void SendCh(char ch);
-char ReceiveCh(void);
-void SendStr(char *s);
+void SendCh(UART_Type *base, char ch);
+char ReceiveCh(UART_Type *base);
+void SendStr(UART_Type *base, char *s);
 void beep(void);
 
 /*
@@ -50,30 +49,26 @@ int main(void) {
 
 	MCUInit();
 	PinInit();
-	//UART0Init();
-	UART5Init();
+	UARTInit(UART5);
 	//RTCInit();
 
   while(1) {
 	beep();
-	SendStr("\r\n");
-	SendStr("Prompt");
-	SendStr("\r\n");
+	SendStr(UART5, "\r\n");
+	SendStr(UART5, "Prompt");
+	SendStr(UART5, "\r\n");
 
 	for(n = 0; n < 4; n++) {
-	  c = ReceiveCh();
-	  SendCh(c);		// Prijaty znak se hned vysle - echo linky
+	  c = ReceiveCh(UART5);
+	  SendCh(UART5, c);		// Prijaty znak se hned vysle - echo linky
 	  recv_str[n] = c;	// Postupne se uklada do pole
 	  beep();
 	}
 	//beep();
-	SendStr("\r\n");
-	//SendStr(strcat("\r\nPoslal si ", recv_str));
+	SendStr(UART5, "\r\n");
 	strcpy(sendMsg, "Poslal si: ");
-	//sendMsg = "Poslal si: ";
 	strcat(sendMsg, recv_str);
-	SendStr(sendMsg);
-	//SendStr("Volaco si poslal.");
+	SendStr(UART5, sendMsg);
   }
 }
 
@@ -89,12 +84,12 @@ void delay(long long bound) {
  * Inicializacia MCU - zakladne nastavenie hodin, vypnutie watchdogu
  */
 void MCUInit(void) {
-	MCG->C1 &= ~MCG_C1_CLKS_MASK;							// FLL for MCGCLKOUT
-	MCG->C1 |= MCG_C1_IREFS_MASK;							// Slow intern. ref. CLK for FLL
+	//MCG->C1 &= ~MCG_C1_CLKS_MASK;							// FLL for MCGCLKOUT
+	//MCG->C1 |= MCG_C1_IREFS_MASK;							// Slow intern. ref. CLK for FLL
 	MCG->C4 |= (MCG_C4_DMX32_MASK | MCG_C4_DRST_DRS(0x01));	// DCO 48 MHz
-	MCG->C6 = 0x0000;										// FLL selected
-	SIM->CLKDIV1 &= ~SIM_CLKDIV1_OUTDIV1_MASK;				// Core clock divided by 1
-	SIM->CLKDIV1 &= ~SIM_CLKDIV1_OUTDIV2_MASK;				// Bus clock divided by 1
+	//MCG->C6 = 0x0000;										// FLL selected
+	//SIM->CLKDIV1 &= ~SIM_CLKDIV1_OUTDIV1_MASK;			// Core clock divided by 1
+	//SIM->CLKDIV1 &= ~SIM_CLKDIV1_OUTDIV2_MASK;			// Bus clock divided by 1
 	WDOG->STCTRLH &= ~WDOG_STCTRLH_WDOGEN_MASK;				// Disable watchdog
 }
 
@@ -109,60 +104,39 @@ void PinInit(void) {
 	SIM->SCGC1 |= SIM_SCGC1_UART5_MASK;			// Povolit hodiny pre UART5
 	//SIM->SOPT5 = 0x00;							// UART0/1 receive/transmit data src on RX/TX pin
 
-//	PORTA->PCR[1] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_RX
-//	PORTA->PCR[2] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_TX
-	PORTE->PCR[8] = (0 | PORT_PCR_MUX(0x03)); 		// UART5_TX
-	PORTE->PCR[9] = (0 | PORT_PCR_MUX(0x03)); 		// UART5_RX
+	//PORTA->PCR[1] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_RX
+	//PORTA->PCR[2] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_TX
+	PORTE->PCR[8] = (0 | PORT_PCR_MUX(0x03)); 	// UART5_TX
+	PORTE->PCR[9] = (0 | PORT_PCR_MUX(0x03)); 	// UART5_RX
 
 	PORTB->PCR[5] = PORT_PCR_MUX(0x01); 		// MCU_LED0 D9
 	PORTB->PCR[4] = PORT_PCR_MUX(0x01); 		// MCU_LED1 D10
 	PORTB->PCR[3] = PORT_PCR_MUX(0x01); 		// MCU_LED2 D11
 
-	PORTA->PCR[4] = (0 | PORT_PCR_MUX(0x01));  		// Beeper (PTA4)
+	PORTA->PCR[4] = (0 | PORT_PCR_MUX(0x01)); 	// Beeper (PTA4)
 
-	PTA->PDDR = GPIO_PDDR_PDD(0x0014); 			// PTA1/4 pin bude vystupny
+	PTA->PDDR = GPIO_PDDR_PDD(0x0010); 			// PTA4 pin bude vystupny
 	PTB->PDDR = GPIO_PDDR_PDD(0x0038); 			// PTB3/4/5 bude vystupny
-	GPIOE->PDDR = GPIO_PDDR_PDD(0x0100);		// PTE8 bude vystupny
+	//GPIOE->PDDR = GPIO_PDDR_PDD(0x0100);		// PTE8 bude vystupny
 	//PTB->PDOR |= GPIO_PDOR_PDO(0x0038);			// Zhasnut LED-ky
 }
 
-/*
- * Inicializacia UART0
- */
-void UART0Init(void) {
-	UART0->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Vypnut vysielac a prijimac
+void UARTInit(UART_Type *base) {
+	base->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Vypnut vysielac a prijimac
 
-	UART0->BDH = 0x00;
-	UART0->BDL = 0x1A;						// Baud rate 115 200 Bd
-	UART0->C4 = 0x01;						// Baud rate fine adjust 1/32, match address mode disabled
-	UART0->C1 = 0x00;						// 8 data bitov, bez parity
-	//UART0->C2 = (0 | UART_C2_TCIE_MASK);	// transmission complete interrupt enable
+	base->BDH = 0x00;
+	base->BDL = 0x1A;						// Baud rate 115 200 Bd
+	base->C4 = 0x01;						// Baud rate fine adjust 1/32, match address mode disabled
+	base->C1 = 0x00;						// 8 data bitov, bez parity
+	//base->C2 = (0 | UART_C2_TCIE_MASK);	// transmission complete interrupt enable
 	//NVIC_EnableIRQ(UART0_RX_TX_IRQn);		// Enable UART0 receive/transmit interrupt
-	//UART0->C3 = 0x00;
-	//UART0->MA1 = 0x00;						// no match address (mode disabled in C4)
-	//UART0->MA2 = 0x00;						// no match address (mode disabled in C4)
-	//UART0->S1 |= 0x1F;						// clear IDLE, OR, NF, FE, PF
-	//UART0->S2 |= 0xC0;						//clear LBKDIF, RXEDGIF
+	base->C3 = 0x00;
+	base->MA1 = 0x00;						// no match address (mode disabled in C4)
+	base->MA2 = 0x00;						// no match address (mode disabled in C4)
+	//base->S1 |= 0x1F;						// clear IDLE, OR, NF, FE, PF
+	base->S2 |= 0xC0;						//clear LBKDIF, RXEDGIF
 
-	UART0->C2 |= (UART_C2_TE_MASK | UART_C2_RE_MASK);	// Zapnut vysielac a prijimac
-}
-
-void UART5Init(void) {
-	UART5->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Vypnut vysielac a prijimac
-
-	UART5->BDH = 0x00;
-	UART5->BDL = 0x1A;						// Baud rate 115 200 Bd
-	UART5->C4 = 0x01;						// Baud rate fine adjust 1/32, match address mode disabled
-	UART5->C1 = 0x00;						// 8 data bitov, bez parity
-	//UART5->C2 = (0 | UART_C2_TCIE_MASK);	// transmission complete interrupt enable
-	//NVIC_EnableIRQ(UART0_RX_TX_IRQn);		// Enable UART0 receive/transmit interrupt
-	UART5->C3 = 0x00;
-	UART5->MA1 = 0x00;						// no match address (mode disabled in C4)
-	UART5->MA2 = 0x00;						// no match address (mode disabled in C4)
-	//UART5->S1 |= 0x1F;						// clear IDLE, OR, NF, FE, PF
-	UART5->S2 |= 0xC0;						//clear LBKDIF, RXEDGIF
-
-	UART5->C2 |= (UART_C2_TE_MASK | UART_C2_RE_MASK);	// Zapnut vysielac a prijimac
+	base->C2 |= (UART_C2_TE_MASK | UART_C2_RE_MASK);	// Zapnut vysielac a prijimac
 }
 
 /*
@@ -190,26 +164,26 @@ void resetTime(rtc_time_t rtc_time) {
 /*
  * Vysielanie jedneho znaku cez UART
  */
-void SendCh(char ch)  {
-    while (!(UART5->S1 & UART_S1_TDRE_MASK) && !(UART5->S1 & UART_S1_TC_MASK));
-    UART5->D = ch;
+void SendCh(UART_Type *base, char ch)  {
+    while (!(base->S1 & UART_S1_TDRE_MASK) && !(base->S1 & UART_S1_TC_MASK));
+    base->D = ch;
 }
 
 /*
  * Prijatie jedneho znaku cez UART
  */
-char ReceiveCh(void) {
-	while (!(UART5->S1 & UART_S1_RDRF_MASK));
-	return UART5->D;
+char ReceiveCh(UART_Type *base) {
+	while (!(base->S1 & UART_S1_RDRF_MASK));
+	return base->D;
 }
 
 /*
  * Vysielanie retazca ukonceneho 0
  */
-void SendStr(char *s)  {
+void SendStr(UART_Type *base, char *s)  {
 	int i = 0;
 	while (s[i] != 0) {
-		SendCh(s[i++]);
+		SendCh(base, s[i++]);
 	}
 }
 
