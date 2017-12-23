@@ -7,90 +7,138 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include "MK60D10.h"
 
 /*
- * Makra
+ * Macros
  */
-/* Cas pre stabilizaciu oscilatora */
 #define	DELAY_OSC_STAB 0x600000
 #define SECONDS_IN_A_DAY (86400U)
-#define SECONDS_IN_A_HOUR (3600U)
+#define SECONDS_IN_AN_HOUR (3600U)
 #define SECONDS_IN_A_MINUTE (60U)
+#define HOURS_IN_A_DAY (24U)
+#define MINUTES_IN_AN_HOUR (60U)
+
+char g_StrMenu[] =
+    "\r\n"
+    "Please choose the sub demo to run:\r\n"
+    "1) Get current date time.\r\n"
+    "2) Set current date time.\r\n"
+    "3) Alarm trigger show.\r\n"
+    "4) Second interrupt show (demo for 7s).\r\n";
 
 /*
- * Typy
+ * Types
  */
-/* Struktura pouzita na ukladanie casu */
+/* Structure used for storing hours, minutes and seconds from the time of the day */
 typedef struct _rtc_time
 {
-    uint8_t hour;   // Rozsah 0-23
-    uint8_t minute; // Rozsah 0-59
-    uint8_t second; // Rozsah 0-59
-} rtc_time_t;
+    uint8_t hour;   // Range 0-23
+    uint8_t minute; // Range 0-59
+    uint8_t second; // Range 0-59
+} dayTime;
 
 /*
- * Prototypy
+ * Prototypes
  */
 void delay(long long bound);
 void MCUInit(void);
 void PinInit(void);
 void UARTInit(UART_Type *base);
 void RTCInit(void);
-void resetTime(rtc_time_t *rtc_time);
+void resetTime(dayTime *rtc_time);
 void SendCh(UART_Type *base, char ch);
 char ReceiveCh(UART_Type *base);
 void SendStr(UART_Type *base, char *s);
 void beep(void);
-void RTCGetTime(rtc_time_t *time);
-void convertSecondsToDayTime(uint32_t seconds, rtc_time_t *time);
+void RTCGetTime(dayTime *time);
+void RTCSetTime(dayTime *time);
+void secondsToDayTime(uint32_t seconds, dayTime *time);
+uint32_t dayTimeToSeconds(dayTime *time);
+void dayTimeToStr(dayTime *dTime, char *strTime);
+bool strToDayTime(dayTime *dTime, char *strTime);
 
 /*
  * Main
  */
 int main(void) {
-	rtc_time_t time;
-	uint32_t secs;
-	char recv_str[5], sendMsg[1024], buf[1024] = "\r00:00:00";
+	dayTime time;
+	char recv_str[5], sendMsg[1024], buf[1024] = "";
 	char c;
-	int n;
+	uint8_t index;
 
 	MCUInit();
 	PinInit();
 	UARTInit(UART5);
 	RTCInit();
 
-	SendStr(UART5, "Prompt");
-	SendStr(UART5, "\r\n");
-
   while(1) {
 	beep();
-
-	c = ReceiveCh(UART5);
-	beep();
-	SendCh(UART5, c);		// Prijaty znak sa hned vysle - echo linky
-	SendStr(UART5, "\r\n");
-	SendStr(UART5, "Cas je: ");
+	SendStr(UART5, g_StrMenu);
+	SendStr(UART5, "\r\nSelect:\r\n");
+	index = ReceiveCh(UART5);
+	SendCh(UART5, index);		// Link echo
 	SendStr(UART5, "\r\n");
 
-	for (long long i = 0; i < 6000; i++) {
-		RTCGetTime(&time);
-		buf[1] = ((time.hour / 10) + 0x30);
-		buf[2] = ((time.hour % 10) + 0x30);
-		buf[3] = ':';
-		buf[4] = ((time.minute / 10) + 0x30);
-		buf[5] = ((time.minute % 10) + 0x30);
-		buf[6] = ':';
-		buf[7] = ((time.second / 10) + 0x30);
-		buf[8] = ((time.second % 10) + 0x30);
-		SendStr(UART5, buf);
+	switch (index) {
+		case '1':
+			RTCGetTime(&time);
+			dayTimeToStr(&time, buf);
+			SendStr(UART5, buf);
+			SendStr(UART5, "\r\n");
+			break;
+		case '2':
+			SendStr(UART5, "Write day time in format like: \"10:10:10\"\r\n");
+			for (int i = 0; i < 8; i++) {
+				c = ReceiveCh(UART5);
+				SendCh(UART5, c);		// Link echo
+				buf[i] = c;
+			}
+			SendStr(UART5, "\r\n");
+			if (strToDayTime(&time, buf)) {
+				RTCSetTime(&time);
+				RTCGetTime(&time);
+				dayTimeToStr(&time, buf);
+				SendStr(UART5, buf);
+				SendStr(UART5, "\r\n");
+			}
+			else {
+				SendStr(UART5, "Invalid input format\r\n");
+			}
+			break;
+		case '3':
+			break;
+		case '4':
+			SendStr(UART5, "Cas je:\r\n");
+			for (long long i = 0; i < 6000; i++) {
+				RTCGetTime(&time);
+				dayTimeToStr(&time, buf);
+				SendStr(UART5, buf);
+			}
+			SendStr(UART5, "\r\n");
+			break;
+		default:
+			break;
 	}
-	SendStr(UART5, "\r\n");
+//	c = ReceiveCh(UART5);
+//	beep();
+//	SendCh(UART5, c);		// Link echo
+//	SendStr(UART5, "\r\n");
+//	SendStr(UART5, "Cas je: ");
+//	SendStr(UART5, "\r\n");
+//
+//	for (long long i = 0; i < 6000; i++) {
+//		RTCGetTime(&time);
+//		dayTimeToStr(&time, buf);
+//		SendStr(UART5, buf);
+//	}
+//	SendStr(UART5, "\r\n");
   }
 }
 
 /*
- * Funkcia oneskorenia
+ * Delay function
  */
 void delay(long long bound) {
   long long i;
@@ -98,7 +146,7 @@ void delay(long long bound) {
 }
 
 /*
- * Inicializacia MCU - zakladne nastavenie hodin, vypnutie watchdogu
+ * MCU initialization - basic clock settings, watchdog turn off
  */
 void MCUInit(void) {
 	//MCG->C1 &= ~MCG_C1_CLKS_MASK;							// FLL for MCGCLKOUT
@@ -111,16 +159,16 @@ void MCUInit(void) {
 }
 
 /*
- * Inicializacia pinov, povolenie hodin
+ * Pins initialization, enable clocks
  */
 void PinInit(void) {
-	SIM->SCGC5 |= SIM_SCGC5_PORTA_MASK;  		// Povolit hodiny pre PORTA
-	SIM->SCGC5 |= SIM_SCGC5_PORTB_MASK;  		// Povolit hodiny pre PORTB
-	SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;  		// Povolit hodiny pre PORTE
-	//SIM->SCGC4 |= SIM_SCGC4_UART0_MASK;			// Povolit hodiny pre UART0
-	SIM->SCGC1 |= SIM_SCGC1_UART5_MASK;			// Povolit hodiny pre UART5
-	//SIM->SOPT5 = 0x00;							// UART0/1 receive/transmit data src on RX/TX pin
-	SIM->SCGC6 |= SIM_SCGC6_RTC_MASK;			//Povolit pristup k RTC
+	SIM->SCGC5 |= SIM_SCGC5_PORTA_MASK;  		// Enable clock for PORTA
+	SIM->SCGC5 |= SIM_SCGC5_PORTB_MASK;  		// Enable clock for PORTB
+	SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;  		// Enable clock for PORTE
+	//SIM->SCGC4 |= SIM_SCGC4_UART0_MASK;		// Enable clock for UART0
+	SIM->SCGC1 |= SIM_SCGC1_UART5_MASK;			// Enable clock for UART5
+	//SIM->SOPT5 = 0x00;						// UART0/1 receive/transmit data src on RX/TX pin
+	SIM->SCGC6 |= SIM_SCGC6_RTC_MASK;			// Enable access to RTC
 
 	//PORTA->PCR[1] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_RX
 	//PORTA->PCR[2] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_TX
@@ -133,14 +181,17 @@ void PinInit(void) {
 
 	PORTA->PCR[4] = (0 | PORT_PCR_MUX(0x01)); 	// Beeper (PTA4)
 
-	PTA->PDDR = GPIO_PDDR_PDD(0x0010); 			// PTA4 pin bude vystupny
-	PTB->PDDR = GPIO_PDDR_PDD(0x0038); 			// PTB3/4/5 bude vystupny
-	//GPIOE->PDDR = GPIO_PDDR_PDD(0x0100);		// PTE8 bude vystupny
-	//PTB->PDOR |= GPIO_PDOR_PDO(0x0038);			// Zhasnut LED-ky
+	PTA->PDDR = GPIO_PDDR_PDD(0x0010); 			// PTA4 as output
+	PTB->PDDR = GPIO_PDDR_PDD(0x0038); 			// PTB3/4/5 as output
+	//GPIOE->PDDR = GPIO_PDDR_PDD(0x0100);		// PTE8 as output
+	//PTB->PDOR |= GPIO_PDOR_PDO(0x0038);			// Turn off the LEDs
 }
 
+/*
+ * UART initialization settings
+ */
 void UARTInit(UART_Type *base) {
-	base->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Vypnut vysielac a prijimac
+	base->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Transmitter and receiver turn off
 
 	base->BDH = 0x00;
 	base->BDL = 0x1A;						// Baud rate 115 200 Bd
@@ -152,33 +203,48 @@ void UARTInit(UART_Type *base) {
 	base->MA1 = 0x00;						// no match address (mode disabled in C4)
 	base->MA2 = 0x00;						// no match address (mode disabled in C4)
 	//base->S1 |= 0x1F;						// clear IDLE, OR, NF, FE, PF
-	base->S2 |= 0xC0;						//clear LBKDIF, RXEDGIF
+	base->S2 |= 0xC0;						// clear LBKDIF, RXEDGIF
 
-	base->C2 |= (UART_C2_TE_MASK | UART_C2_RE_MASK);	// Zapnut vysielac a prijimac
+	base->C2 |= (UART_C2_TE_MASK | UART_C2_RE_MASK);	// Transmitter and receiver turn on
 }
 
 /*
- * Inicializacia Real Time Counter
+ * Real Time Clock initialization settings
  */
 void RTCInit(void) {
-	RTC->CR |= RTC_CR_SWR_MASK;			// reset vsetkych RTC registrov
-	RTC->CR &= ~RTC_CR_SWR_MASK;		// vynulovanie SWR
-	RTC->TCR = 0x0000;					// clear compensation interval/time
-	RTC->TSR = 0x0000;					// clear TOF and TIF
-	RTC->CR |= RTC_CR_OSCE_MASK;		// enable oscillator
-	delay(DELAY_OSC_STAB);			// cakanie na stabilizaciu oscilatora
-	RTC->SR |= RTC_SR_TCE_MASK;			//enable counter
+	RTC->CR |= RTC_CR_SWR_MASK;		// reset all RTC registers
+	RTC->CR &= ~RTC_CR_SWR_MASK;	// clear SWR
+	RTC->TCR = 0x0000;				// clear compensation interval/time
+	RTC->TSR = 0x0000;				// clear TOF and TIF
+	RTC->CR |= RTC_CR_OSCE_MASK;	// enable oscillator
+	delay(DELAY_OSC_STAB);			// wait for the oscillator to stabilize
+	RTC->SR |= RTC_SR_TCE_MASK;		// enable counter
 	RTC->TAR = 0x0000;				// clear TAF
 }
 
-void RTCGetTime(rtc_time_t *time)
+/*
+ * Fill the dayTime structure by the converted value of RTC counter
+ */
+void RTCGetTime(dayTime *time)
 {
     uint32_t seconds = 0;
     seconds = RTC->TSR;
-    convertSecondsToDayTime(seconds, time);
+    secondsToDayTime(seconds, time);
 }
 
-void convertSecondsToDayTime(uint32_t seconds, rtc_time_t *time)
+/*
+ * Fill the RTC counter by the converted value from dayTime structure
+ */
+void RTCSetTime(dayTime *time)
+{
+    uint32_t seconds;
+    seconds = dayTimeToSeconds(time);
+    RTC->SR &= ~RTC_SR_TCE_MASK;		// Disable counter
+    RTC->TSR = seconds;					// Write seconds value to the register
+    RTC->SR |= RTC_SR_TCE_MASK;			// Enable counter
+}
+
+void secondsToDayTime(uint32_t seconds, dayTime *time)
 {
     uint32_t secondsRemaining = seconds;
 
@@ -186,23 +252,73 @@ void convertSecondsToDayTime(uint32_t seconds, rtc_time_t *time)
     secondsRemaining = secondsRemaining % SECONDS_IN_A_DAY;
 
     /* Prepocet sekund na hodiny, minuty a zvysne sekundy  */
-    time->hour = secondsRemaining / SECONDS_IN_A_HOUR;
-    secondsRemaining = secondsRemaining % SECONDS_IN_A_HOUR;
+    time->hour = secondsRemaining / SECONDS_IN_AN_HOUR;
+    secondsRemaining = secondsRemaining % SECONDS_IN_AN_HOUR;
     time->minute = secondsRemaining / SECONDS_IN_A_MINUTE;
     time->second = secondsRemaining % SECONDS_IN_A_MINUTE;
 }
 
+uint32_t dayTimeToSeconds(dayTime *time) {
+	uint32_t seconds = time->hour * SECONDS_IN_AN_HOUR;
+	seconds += time->minute * SECONDS_IN_A_MINUTE;
+	seconds += time->second;
+	return seconds;
+}
+
 /*
- * Resetovanie casu
+ * Convert dayTime values to string like "\r00:00:00"
  */
-void resetTime(rtc_time_t *rtc_time) {
+void dayTimeToStr(dayTime *dTime, char *strTime) {
+	strTime[0] = '\r';
+	strTime[1] = ((dTime->hour / 10) + 0x30);
+	strTime[2] = ((dTime->hour % 10) + 0x30);
+	strTime[3] = ':';
+	strTime[4] = ((dTime->minute / 10) + 0x30);
+	strTime[5] = ((dTime->minute % 10) + 0x30);
+	strTime[6] = ':';
+	strTime[7] = ((dTime->second / 10) + 0x30);
+	strTime[8] = ((dTime->second % 10) + 0x30);
+}
+
+/*
+ * Convert string like "\r00:00:00" to dayTime values
+ */
+bool strToDayTime(dayTime *dTime, char *strTime) {
+	bool succ = false;
+	uint32_t result;
+	uint16_t hour, minute, second;
+
+	result = sscanf(strTime, "%02hd:%02hd:%02hd", &hour, &minute, &second);
+	/* The return value must be 3U - 3 input items successfully matched */
+	if (result != 3U) {
+		succ = false;
+	}
+	else {
+		if ((hour >= HOURS_IN_A_DAY) || (minute >= MINUTES_IN_AN_HOUR) ||
+			(second >= SECONDS_IN_AN_HOUR)) {
+			succ = false;
+		}
+		else {
+			dTime->hour = (uint8_t)hour;
+			dTime->minute = (uint8_t)minute;
+			dTime->second = (uint8_t)second;
+			succ = true;
+		}
+	}
+	return succ;
+}
+
+/*
+ * Reset time
+ */
+void resetTime(dayTime *rtc_time) {
 	rtc_time->hour = 0U;
 	rtc_time->minute = 0U;
 	rtc_time->second = 0U;
 }
 
 /*
- * Vysielanie jedneho znaku cez UART
+ * Transmit one character through UART
  */
 void SendCh(UART_Type *base, char ch)  {
     while (!(base->S1 & UART_S1_TDRE_MASK) && !(base->S1 & UART_S1_TC_MASK));
@@ -210,7 +326,7 @@ void SendCh(UART_Type *base, char ch)  {
 }
 
 /*
- * Prijatie jedneho znaku cez UART
+ * Receive one character through UART
  */
 char ReceiveCh(UART_Type *base) {
 	while (!(base->S1 & UART_S1_RDRF_MASK));
@@ -218,7 +334,7 @@ char ReceiveCh(UART_Type *base) {
 }
 
 /*
- * Vysielanie retazca ukonceneho 0
+ * Transmit string terminated by 0
  */
 void SendStr(UART_Type *base, char *s)  {
 	int i = 0;
@@ -228,7 +344,7 @@ void SendStr(UART_Type *base, char *s)  {
 }
 
 /*
- * Pipnutie cez bzuciak na PTA4
+ * Beep from the beeper on PTA4
  */
 void beep(void) {
 	int q;
