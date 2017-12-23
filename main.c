@@ -2,9 +2,11 @@
  * Pouzite:
  * 06-imp-demo-FITkit3-src/Sources/main.c
  * Laboratorni uloha c. 1 z predmetu IMP
+ * KSDK demo app - rtc_func/drivers/fsl_rtc.c
  **/
 
 #include <string.h>
+#include <stdio.h>
 #include "MK60D10.h"
 
 /*
@@ -12,6 +14,9 @@
  */
 /* Cas pre stabilizaciu oscilatora */
 #define	DELAY_OSC_STAB 0x600000
+#define SECONDS_IN_A_DAY (86400U)
+#define SECONDS_IN_A_HOUR (3600U)
+#define SECONDS_IN_A_MINUTE (60U)
 
 /*
  * Typy
@@ -22,7 +27,7 @@ typedef struct _rtc_time
     uint8_t hour;   // Rozsah 0-23
     uint8_t minute; // Rozsah 0-59
     uint8_t second; // Rozsah 0-59
-} *rtc_time_t;
+} rtc_time_t;
 
 /*
  * Prototypy
@@ -32,18 +37,21 @@ void MCUInit(void);
 void PinInit(void);
 void UARTInit(UART_Type *base);
 void RTCInit(void);
-void resetTime(rtc_time_t rtc_time);
+void resetTime(rtc_time_t *rtc_time);
 void SendCh(UART_Type *base, char ch);
 char ReceiveCh(UART_Type *base);
 void SendStr(UART_Type *base, char *s);
 void beep(void);
+void RTCGetTime(rtc_time_t *time);
+void convertSecondsToDayTime(uint32_t seconds, rtc_time_t *time);
 
 /*
  * Main
  */
 int main(void) {
 	rtc_time_t time;
-	char recv_str[5], sendMsg[1024];
+	uint32_t secs;
+	char recv_str[5], sendMsg[1024], buf[1024] = "\r00:00:00";
 	char c;
 	int n;
 
@@ -52,23 +60,32 @@ int main(void) {
 	UARTInit(UART5);
 	RTCInit();
 
-  while(1) {
-	beep();
-	SendStr(UART5, "\r\n");
 	SendStr(UART5, "Prompt");
 	SendStr(UART5, "\r\n");
 
-	for(n = 0; n < 4; n++) {
-	  c = ReceiveCh(UART5);
-	  SendCh(UART5, c);		// Prijaty znak se hned vysle - echo linky
-	  recv_str[n] = c;	// Postupne se uklada do pole
-	  beep();
-	}
-	//beep();
+  while(1) {
+	beep();
+
+	c = ReceiveCh(UART5);
+	beep();
+	SendCh(UART5, c);		// Prijaty znak sa hned vysle - echo linky
 	SendStr(UART5, "\r\n");
-	strcpy(sendMsg, "Poslal si: ");
-	strcat(sendMsg, recv_str);
-	SendStr(UART5, sendMsg);
+	SendStr(UART5, "Cas je: ");
+	SendStr(UART5, "\r\n");
+
+	for (long long i = 0; i < 6000; i++) {
+		RTCGetTime(&time);
+		buf[1] = ((time.hour / 10) + 0x30);
+		buf[2] = ((time.hour % 10) + 0x30);
+		buf[3] = ':';
+		buf[4] = ((time.minute / 10) + 0x30);
+		buf[5] = ((time.minute % 10) + 0x30);
+		buf[6] = ':';
+		buf[7] = ((time.second / 10) + 0x30);
+		buf[8] = ((time.second % 10) + 0x30);
+		SendStr(UART5, buf);
+	}
+	SendStr(UART5, "\r\n");
   }
 }
 
@@ -144,20 +161,41 @@ void UARTInit(UART_Type *base) {
  * Inicializacia Real Time Counter
  */
 void RTCInit(void) {
-	RTC->CR |= RTC_CR_SWR_MASK;			//reset vsetkych RTC registrov
-	RTC->CR &= ~RTC_CR_SWR_MASK;		//vynulovanie SWR
-	RTC->TCR = RTC_TCR_CIR(0);			//clear compensation interval
-	RTC->TCR = RTC_TCR_TCR(0);			//clear compensation time
+	RTC->CR |= RTC_CR_SWR_MASK;			// reset vsetkych RTC registrov
+	RTC->CR &= ~RTC_CR_SWR_MASK;		// vynulovanie SWR
 	RTC->TCR = 0x0000;					// clear compensation interval/time
-	RTC->CR |= RTC_CR_OSCE_MASK;		//enable oscillator
-	delay(DELAY_OSC_STAB);			//cakanie na stabilizaciu oscilatora
+	RTC->TSR = 0x0000;					// clear TOF and TIF
+	RTC->CR |= RTC_CR_OSCE_MASK;		// enable oscillator
+	delay(DELAY_OSC_STAB);			// cakanie na stabilizaciu oscilatora
 	RTC->SR |= RTC_SR_TCE_MASK;			//enable counter
+	RTC->TAR = 0x0000;				// clear TAF
+}
+
+void RTCGetTime(rtc_time_t *time)
+{
+    uint32_t seconds = 0;
+    seconds = RTC->TSR;
+    convertSecondsToDayTime(seconds, time);
+}
+
+void convertSecondsToDayTime(uint32_t seconds, rtc_time_t *time)
+{
+    uint32_t secondsRemaining = seconds;
+
+    /* Normalizacia poctu sekund vzhladom na den*/
+    secondsRemaining = secondsRemaining % SECONDS_IN_A_DAY;
+
+    /* Prepocet sekund na hodiny, minuty a zvysne sekundy  */
+    time->hour = secondsRemaining / SECONDS_IN_A_HOUR;
+    secondsRemaining = secondsRemaining % SECONDS_IN_A_HOUR;
+    time->minute = secondsRemaining / SECONDS_IN_A_MINUTE;
+    time->second = secondsRemaining % SECONDS_IN_A_MINUTE;
 }
 
 /*
  * Resetovanie casu
  */
-void resetTime(rtc_time_t rtc_time) {
+void resetTime(rtc_time_t *rtc_time) {
 	rtc_time->hour = 0U;
 	rtc_time->minute = 0U;
 	rtc_time->second = 0U;
