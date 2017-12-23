@@ -50,7 +50,7 @@ int main(void) {
 	MCUInit();
 	PinInit();
 	UARTInit(UART5);
-	//RTCInit();
+	RTCInit();
 
   while(1) {
 	beep();
@@ -103,6 +103,7 @@ void PinInit(void) {
 	//SIM->SCGC4 |= SIM_SCGC4_UART0_MASK;			// Povolit hodiny pre UART0
 	SIM->SCGC1 |= SIM_SCGC1_UART5_MASK;			// Povolit hodiny pre UART5
 	//SIM->SOPT5 = 0x00;							// UART0/1 receive/transmit data src on RX/TX pin
+	SIM->SCGC6 |= SIM_SCGC6_RTC_MASK;			//Povolit pristup k RTC
 
 	//PORTA->PCR[1] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_RX
 	//PORTA->PCR[2] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_TX
@@ -143,13 +144,14 @@ void UARTInit(UART_Type *base) {
  * Inicializacia Real Time Counter
  */
 void RTCInit(void) {
-	//RTC->CR |= RTC_CR_SWR_MASK;			//reset vsetkych RTC registrov
-	RTC->CR = RTC_CR_SWR(0);				//vynulovanie SWR
-	RTC->TCR = RTC_TCR_CIR(0);				//clear compensation interval
-	RTC->TCR = RTC_TCR_TCR(0);				//clear compensation time
-	RTC->CR |= RTC_CR_OSCE_MASK;			//enable oscillator
-	delay(DELAY_OSC_STAB);					//cakanie na stabilizaciu oscilatora
-	RTC->SR |= RTC_SR_TCE_MASK;				//enable counter
+	RTC->CR |= RTC_CR_SWR_MASK;			//reset vsetkych RTC registrov
+	RTC->CR &= ~RTC_CR_SWR_MASK;		//vynulovanie SWR
+	RTC->TCR = RTC_TCR_CIR(0);			//clear compensation interval
+	RTC->TCR = RTC_TCR_TCR(0);			//clear compensation time
+	RTC->TCR = 0x0000;					// clear compensation interval/time
+	RTC->CR |= RTC_CR_OSCE_MASK;		//enable oscillator
+	delay(DELAY_OSC_STAB);			//cakanie na stabilizaciu oscilatora
+	RTC->SR |= RTC_SR_TCE_MASK;			//enable counter
 }
 
 /*
