@@ -1,5 +1,5 @@
 /**
- * Pouzite:
+ * Used:
  * 06-imp-demo-FITkit3-src/Sources/main.c
  * Laboratorni uloha c. 1 z predmetu IMP
  * KSDK demo app - rtc_func/drivers/fsl_rtc.c
@@ -67,73 +67,61 @@ int main(void) {
 	char recv_str[5], sendMsg[1024], buf[1024] = "";
 	char c;
 	uint8_t index;
+	UART_Type *UARTChannel = UART5;
 
 	MCUInit();
 	PinInit();
-	UARTInit(UART5);
+	UARTInit(UARTChannel);
 	RTCInit();
 
   while(1) {
 	beep();
-	SendStr(UART5, g_StrMenu);
-	SendStr(UART5, "\r\nSelect:\r\n");
-	index = ReceiveCh(UART5);
-	SendCh(UART5, index);		// Link echo
-	SendStr(UART5, "\r\n");
+	SendStr(UARTChannel, g_StrMenu);
+	SendStr(UARTChannel, "\r\nSelect:\r\n");
+	index = ReceiveCh(UARTChannel);
+	SendCh(UARTChannel, index);		// Link echo
+	SendStr(UARTChannel, "\r\n");
 
 	switch (index) {
 		case '1':
 			RTCGetTime(&time);
 			dayTimeToStr(&time, buf);
-			SendStr(UART5, buf);
-			SendStr(UART5, "\r\n");
+			SendStr(UARTChannel, buf);
+			SendStr(UARTChannel, "\r\n");
 			break;
 		case '2':
-			SendStr(UART5, "Write day time in format like: \"10:10:10\"\r\n");
+			SendStr(UARTChannel, "Write day time in format like: \"10:10:10\"\r\n");
 			for (int i = 0; i < 8; i++) {
-				c = ReceiveCh(UART5);
-				SendCh(UART5, c);		// Link echo
+				c = ReceiveCh(UARTChannel);
+				SendCh(UARTChannel, c);		// Link echo
 				buf[i] = c;
 			}
-			SendStr(UART5, "\r\n");
+			SendStr(UARTChannel, "\r\n");
 			if (strToDayTime(&time, buf)) {
 				RTCSetTime(&time);
 				RTCGetTime(&time);
 				dayTimeToStr(&time, buf);
-				SendStr(UART5, buf);
-				SendStr(UART5, "\r\n");
+				SendStr(UARTChannel, buf);
+				SendStr(UARTChannel, "\r\n");
 			}
 			else {
-				SendStr(UART5, "Invalid input format\r\n");
+				SendStr(UARTChannel, "Invalid input format\r\n");
 			}
 			break;
 		case '3':
 			break;
 		case '4':
-			SendStr(UART5, "Cas je:\r\n");
+			SendStr(UARTChannel, "Cas je:\r\n");
 			for (long long i = 0; i < 6000; i++) {
 				RTCGetTime(&time);
 				dayTimeToStr(&time, buf);
-				SendStr(UART5, buf);
+				SendStr(UARTChannel, buf);
 			}
-			SendStr(UART5, "\r\n");
+			SendStr(UARTChannel, "\r\n");
 			break;
 		default:
 			break;
 	}
-//	c = ReceiveCh(UART5);
-//	beep();
-//	SendCh(UART5, c);		// Link echo
-//	SendStr(UART5, "\r\n");
-//	SendStr(UART5, "Cas je: ");
-//	SendStr(UART5, "\r\n");
-//
-//	for (long long i = 0; i < 6000; i++) {
-//		RTCGetTime(&time);
-//		dayTimeToStr(&time, buf);
-//		SendStr(UART5, buf);
-//	}
-//	SendStr(UART5, "\r\n");
   }
 }
 
@@ -165,13 +153,9 @@ void PinInit(void) {
 	SIM->SCGC5 |= SIM_SCGC5_PORTA_MASK;  		// Enable clock for PORTA
 	SIM->SCGC5 |= SIM_SCGC5_PORTB_MASK;  		// Enable clock for PORTB
 	SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;  		// Enable clock for PORTE
-	//SIM->SCGC4 |= SIM_SCGC4_UART0_MASK;		// Enable clock for UART0
 	SIM->SCGC1 |= SIM_SCGC1_UART5_MASK;			// Enable clock for UART5
-	//SIM->SOPT5 = 0x00;						// UART0/1 receive/transmit data src on RX/TX pin
 	SIM->SCGC6 |= SIM_SCGC6_RTC_MASK;			// Enable access to RTC
 
-	//PORTA->PCR[1] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_RX
-	//PORTA->PCR[2] = (0 | PORT_PCR_MUX(0x02)); 		// UART0_TX
 	PORTE->PCR[8] = (0 | PORT_PCR_MUX(0x03)); 	// UART5_TX
 	PORTE->PCR[9] = (0 | PORT_PCR_MUX(0x03)); 	// UART5_RX
 
@@ -183,7 +167,6 @@ void PinInit(void) {
 
 	PTA->PDDR = GPIO_PDDR_PDD(0x0010); 			// PTA4 as output
 	PTB->PDDR = GPIO_PDDR_PDD(0x0038); 			// PTB3/4/5 as output
-	//GPIOE->PDDR = GPIO_PDDR_PDD(0x0100);		// PTE8 as output
 	//PTB->PDOR |= GPIO_PDOR_PDO(0x0038);			// Turn off the LEDs
 }
 
@@ -196,14 +179,14 @@ void UARTInit(UART_Type *base) {
 	base->BDH = 0x00;
 	base->BDL = 0x1A;						// Baud rate 115 200 Bd
 	base->C4 = 0x01;						// Baud rate fine adjust 1/32, match address mode disabled
-	base->C1 = 0x00;						// 8 data bitov, bez parity
+	//base->C1 = 0x00;						// 8 data bitov, bez parity
 	//base->C2 = (0 | UART_C2_TCIE_MASK);	// transmission complete interrupt enable
 	//NVIC_EnableIRQ(UART0_RX_TX_IRQn);		// Enable UART0 receive/transmit interrupt
-	base->C3 = 0x00;
-	base->MA1 = 0x00;						// no match address (mode disabled in C4)
-	base->MA2 = 0x00;						// no match address (mode disabled in C4)
+	//base->C3 = 0x00;
+	//base->MA1 = 0x00;						// no match address (mode disabled in C4)
+	//base->MA2 = 0x00;						// no match address (mode disabled in C4)
 	//base->S1 |= 0x1F;						// clear IDLE, OR, NF, FE, PF
-	base->S2 |= 0xC0;						// clear LBKDIF, RXEDGIF
+	//base->S2 |= 0xC0;						// clear LBKDIF, RXEDGIF
 
 	base->C2 |= (UART_C2_TE_MASK | UART_C2_RE_MASK);	// Transmitter and receiver turn on
 }
@@ -248,10 +231,10 @@ void secondsToDayTime(uint32_t seconds, dayTime *time)
 {
     uint32_t secondsRemaining = seconds;
 
-    /* Normalizacia poctu sekund vzhladom na den*/
+    /* Relativize seconds with respect to max number of seconds in a day*/
     secondsRemaining = secondsRemaining % SECONDS_IN_A_DAY;
 
-    /* Prepocet sekund na hodiny, minuty a zvysne sekundy  */
+    /* Compute hours, minutes and seconds  */
     time->hour = secondsRemaining / SECONDS_IN_AN_HOUR;
     secondsRemaining = secondsRemaining % SECONDS_IN_AN_HOUR;
     time->minute = secondsRemaining / SECONDS_IN_A_MINUTE;
@@ -281,7 +264,7 @@ void dayTimeToStr(dayTime *dTime, char *strTime) {
 }
 
 /*
- * Convert string like "\r00:00:00" to dayTime values
+ * Convert string like "00:00:00" to dayTime values
  */
 bool strToDayTime(dayTime *dTime, char *strTime) {
 	bool succ = false;
