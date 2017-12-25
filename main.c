@@ -20,6 +20,9 @@
 #define HOURS_IN_A_DAY (24U)
 #define MINUTES_IN_AN_HOUR (60U)
 
+/*
+ * Global variables
+ */
 char g_StrMenu[] =
     "\r\n"
     "Please choose the sub demo to run:\r\n"
@@ -156,14 +159,14 @@ void PinInit(void) {
 	SIM->SCGC1 |= SIM_SCGC1_UART5_MASK;			// Enable clock for UART5
 	SIM->SCGC6 |= SIM_SCGC6_RTC_MASK;			// Enable access to RTC
 
-	PORTE->PCR[8] = (0 | PORT_PCR_MUX(0x03)); 	// UART5_TX
-	PORTE->PCR[9] = (0 | PORT_PCR_MUX(0x03)); 	// UART5_RX
+	PORTE->PCR[8] = PORT_PCR_MUX(0x03); 		// UART5_TX
+	PORTE->PCR[9] = PORT_PCR_MUX(0x03); 		// UART5_RX
 
 	PORTB->PCR[5] = PORT_PCR_MUX(0x01); 		// MCU_LED0 D9
 	PORTB->PCR[4] = PORT_PCR_MUX(0x01); 		// MCU_LED1 D10
 	PORTB->PCR[3] = PORT_PCR_MUX(0x01); 		// MCU_LED2 D11
 
-	PORTA->PCR[4] = (0 | PORT_PCR_MUX(0x01)); 	// Beeper (PTA4)
+	PORTA->PCR[4] = PORT_PCR_MUX(0x01); 		// Beeper (PTA4)
 
 	PTA->PDDR = GPIO_PDDR_PDD(0x0010); 			// PTA4 as output
 	PTB->PDDR = GPIO_PDDR_PDD(0x0038); 			// PTB3/4/5 as output
@@ -174,7 +177,7 @@ void PinInit(void) {
  * UART initialization settings
  */
 void UARTInit(UART_Type *base) {
-	base->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);		// Transmitter and receiver turn off
+	base->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);	// Transmitter and receiver turn off
 
 	base->BDH = 0x00;
 	base->BDL = 0x1A;						// Baud rate 115 200 Bd
@@ -227,6 +230,9 @@ void RTCSetTime(dayTime *time)
     RTC->SR |= RTC_SR_TCE_MASK;			// Enable counter
 }
 
+/*
+ * Convert seconds from RTC counter to dayTime
+ */
 void secondsToDayTime(uint32_t seconds, dayTime *time)
 {
     uint32_t secondsRemaining = seconds;
@@ -241,6 +247,9 @@ void secondsToDayTime(uint32_t seconds, dayTime *time)
     time->second = secondsRemaining % SECONDS_IN_A_MINUTE;
 }
 
+/*
+ * Convert dayTime values to single value of seconds
+ */
 uint32_t dayTimeToSeconds(dayTime *time) {
 	uint32_t seconds = time->hour * SECONDS_IN_AN_HOUR;
 	seconds += time->minute * SECONDS_IN_A_MINUTE;
@@ -277,6 +286,7 @@ bool strToDayTime(dayTime *dTime, char *strTime) {
 		succ = false;
 	}
 	else {
+		/* Check the limits */
 		if ((hour >= HOURS_IN_A_DAY) || (minute >= MINUTES_IN_AN_HOUR) ||
 			(second >= SECONDS_IN_AN_HOUR)) {
 			succ = false;
