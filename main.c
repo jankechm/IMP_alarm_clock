@@ -23,13 +23,15 @@
 /*
  * Global variables
  */
+UART_Type *UARTChannel = UART5;
 char g_StrMenu[] =
     "\r\n"
     "Please choose the sub demo to run:\r\n"
-    "1) Get current date time.\r\n"
-    "2) Set current date time.\r\n"
-    "3) Alarm trigger show.\r\n"
-    "4) Second interrupt show (demo for 7s).\r\n";
+    "1) Get current day-time.\r\n"
+    "2) Set current day-time.\r\n"
+    "3) Set alarm.\r\n"
+    "4) Second interrupt show (demo for 7s).\r\n"
+	"5) Get current alarm.\r\n";
 
 /*
  * Types
@@ -50,13 +52,16 @@ void MCUInit(void);
 void PinInit(void);
 void UARTInit(UART_Type *base);
 void RTCInit(void);
-void resetTime(dayTime *rtc_time);
+void RTC_IRQHandler(void);
 void SendCh(UART_Type *base, char ch);
 char ReceiveCh(UART_Type *base);
 void SendStr(UART_Type *base, char *s);
 void beep(void);
 void RTCGetTime(dayTime *time);
+void RTCGetAlarm(dayTime *time);
 void RTCSetTime(dayTime *time);
+void RTCResetTime(void);
+void RTCSetAlarm(dayTime *time);
 void secondsToDayTime(uint32_t seconds, dayTime *time);
 uint32_t dayTimeToSeconds(dayTime *time);
 void dayTimeToStr(dayTime *dTime, char *strTime);
@@ -70,7 +75,6 @@ int main(void) {
 	char recv_str[5], sendMsg[1024], buf[1024] = "";
 	char c;
 	uint8_t index;
-	UART_Type *UARTChannel = UART5;
 
 	MCUInit();
 	PinInit();
@@ -93,6 +97,7 @@ int main(void) {
 			SendStr(UARTChannel, "\r\n");
 			break;
 		case '2':
+			SendStr(UARTChannel, "Set time\r\n");
 			SendStr(UARTChannel, "Write day time in format like: \"10:10:10\"\r\n");
 			for (int i = 0; i < 8; i++) {
 				c = ReceiveCh(UARTChannel);
@@ -112,6 +117,21 @@ int main(void) {
 			}
 			break;
 		case '3':
+			SendStr(UARTChannel, "Set alarm\r\n");
+			SendStr(UARTChannel, "Write day time in format like: \"10:10:10\"\r\n");
+			for (int i = 0; i < 8; i++) {
+				c = ReceiveCh(UARTChannel);
+				SendCh(UARTChannel, c);		// Link echo
+				buf[i] = c;
+			}
+			SendStr(UARTChannel, "\r\n");
+			if (strToDayTime(&time, buf)) {
+				RTCSetAlarm(&time);
+				RTCGetAlarm(&time);
+				dayTimeToStr(&time, buf);
+				SendStr(UARTChannel, buf);
+				SendStr(UARTChannel, "\r\n");
+			}
 			break;
 		case '4':
 			SendStr(UARTChannel, "Cas je:\r\n");
@@ -122,6 +142,12 @@ int main(void) {
 			}
 			SendStr(UARTChannel, "\r\n");
 			break;
+		case '5':
+				RTCGetAlarm(&time);
+				dayTimeToStr(&time, buf);
+				SendStr(UARTChannel, buf);
+				SendStr(UARTChannel, "\r\n");
+				break;
 		default:
 			break;
 	}
@@ -206,28 +232,45 @@ void RTCInit(void) {
 	delay(DELAY_OSC_STAB);			// wait for the oscillator to stabilize
 	RTC->SR |= RTC_SR_TCE_MASK;		// enable counter
 	RTC->TAR = 0x0000;				// clear TAF
+	NVIC_EnableIRQ(RTC_IRQn);		// enable RTC interrupt
 }
 
 /*
- * Fill the dayTime structure by the converted value of RTC counter
+ * Fill the dayTime structure by the converted value from RTC seconds register
  */
 void RTCGetTime(dayTime *time)
 {
-    uint32_t seconds = 0;
-    seconds = RTC->TSR;
+    uint32_t seconds = RTC->TSR;
     secondsToDayTime(seconds, time);
 }
 
 /*
- * Fill the RTC counter by the converted value from dayTime structure
+ * Fill the dayTime structure by the converted value from RTC alarm register
+ */
+void RTCGetAlarm(dayTime *time)
+{
+    uint32_t seconds = RTC->TAR;
+    secondsToDayTime(seconds, time);
+}
+
+/*
+ * Fill the RTC seconds register by the converted value from dayTime structure
  */
 void RTCSetTime(dayTime *time)
 {
-    uint32_t seconds;
-    seconds = dayTimeToSeconds(time);
-    RTC->SR &= ~RTC_SR_TCE_MASK;		// Disable counter
-    RTC->TSR = seconds;					// Write seconds value to the register
-    RTC->SR |= RTC_SR_TCE_MASK;			// Enable counter
+    uint32_t seconds = dayTimeToSeconds(time);	// Get seconds from dayTime
+    RTC->SR &= ~RTC_SR_TCE_MASK;				// Disable counter
+    RTC->TSR = seconds;							// Write seconds value to the register
+    RTC->SR |= RTC_SR_TCE_MASK;					// Enable counter
+}
+
+/*
+ * Reset the RTC seconds register
+ */
+void RTCResetTime(void) {
+	RTC->SR &= ~RTC_SR_TCE_MASK;		// Disable counter
+	RTC->TSR = 0U;						// Reset seconds register
+	RTC->SR |= RTC_SR_TCE_MASK;			// Enable counter
 }
 
 /*
@@ -302,12 +345,42 @@ bool strToDayTime(dayTime *dTime, char *strTime) {
 }
 
 /*
- * Reset time
+ * Override the RTC IRQ handler.
  */
-void resetTime(dayTime *rtc_time) {
-	rtc_time->hour = 0U;
-	rtc_time->minute = 0U;
-	rtc_time->second = 0U;
+void RTC_IRQHandler(void)
+{
+    dayTime time;
+
+	if (RTC->SR & RTC_SR_TAF_MASK) {
+    	/* Clear alarm flag */
+    	RTC->TAR = 0U;
+    	/* Disable alarm interrupt */
+    	RTC->IER &= ~RTC_IER_TAIE_MASK;
+
+    	//RTCGetTime(&time);
+		//dayTimeToStr(&time, buf);
+		SendStr(UARTChannel, "Alarm! ");
+		//SendStr(UARTChannel, buf);
+		SendStr(UARTChannel, "\r\n");
+    }
+}
+
+/*
+ * Fill the RTC alarm register by the converted value from dayTime structure
+ */
+void RTCSetAlarm(dayTime *time) {
+	uint32_t alarmSeconds = dayTimeToSeconds(time);
+	uint32_t currSeconds = RTC->TSR;
+	/* Elapsed days since RTC counter starts counting from 0 */
+	uint32_t daysElapsed = currSeconds / SECONDS_IN_A_DAY;
+	/* Make an absolute value of alarmSeconds (include elapsed days) */
+	alarmSeconds += daysElapsed * SECONDS_IN_A_DAY;
+	/* If the alarm is for another day, increment it by 1 day*/
+	if (alarmSeconds < currSeconds) {
+		alarmSeconds += SECONDS_IN_A_DAY;
+	}
+	RTC->IER |= RTC_IER_TAIE_MASK;				//Enable alarm interrupt
+	RTC->TAR = alarmSeconds;
 }
 
 /*
