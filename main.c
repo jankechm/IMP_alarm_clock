@@ -14,6 +14,7 @@
  * Macros
  */
 #define	DELAY_OSC_STAB 0x600000
+#define	BUF_SIZE 1024
 #define SECONDS_IN_A_DAY (86400U)
 #define SECONDS_IN_AN_HOUR (3600U)
 #define SECONDS_IN_A_MINUTE (60U)
@@ -52,7 +53,9 @@ void MCUInit(void);
 void PinInit(void);
 void UARTInit(UART_Type *base);
 void RTCInit(void);
+void PIT0Init(void);
 void RTC_IRQHandler(void);
+void PIT0_IRQHandler(void);
 void SendCh(UART_Type *base, char ch);
 char ReceiveCh(UART_Type *base);
 void SendStr(UART_Type *base, char *s);
@@ -72,14 +75,14 @@ bool strToDayTime(dayTime *dTime, char *strTime);
  */
 int main(void) {
 	dayTime time;
-	char recv_str[5], sendMsg[1024], buf[1024] = "";
-	char c;
+	char c, buf[BUF_SIZE] = "";
 	uint8_t index;
 
 	MCUInit();
 	PinInit();
 	UARTInit(UARTChannel);
 	RTCInit();
+	PIT0Init();
 
   while(1) {
 	beep();
@@ -183,6 +186,7 @@ void PinInit(void) {
 	SIM->SCGC5 |= SIM_SCGC5_PORTB_MASK;  		// Enable clock for PORTB
 	SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;  		// Enable clock for PORTE
 	SIM->SCGC1 |= SIM_SCGC1_UART5_MASK;			// Enable clock for UART5
+	SIM->SCGC6 |= SIM_SCGC6_PIT_MASK;			// Enable clock for PIT
 	SIM->SCGC6 |= SIM_SCGC6_RTC_MASK;			// Enable access to RTC
 
 	PORTE->PCR[8] = PORT_PCR_MUX(0x03); 		// UART5_TX
@@ -191,12 +195,13 @@ void PinInit(void) {
 	PORTB->PCR[5] = PORT_PCR_MUX(0x01); 		// MCU_LED0 D9
 	PORTB->PCR[4] = PORT_PCR_MUX(0x01); 		// MCU_LED1 D10
 	PORTB->PCR[3] = PORT_PCR_MUX(0x01); 		// MCU_LED2 D11
+	PORTB->PCR[2] = PORT_PCR_MUX(0x01); 		// MCU_LED3 D12
 
 	PORTA->PCR[4] = PORT_PCR_MUX(0x01); 		// Beeper (PTA4)
 
 	PTA->PDDR = GPIO_PDDR_PDD(0x0010); 			// PTA4 as output
-	PTB->PDDR = GPIO_PDDR_PDD(0x0038); 			// PTB3/4/5 as output
-	//PTB->PDOR |= GPIO_PDOR_PDO(0x0038);			// Turn off the LEDs
+	PTB->PDDR = GPIO_PDDR_PDD(0x003C); 			// PTB2/3/4/5 as output
+	//PTB->PDOR |= GPIO_PDOR_PDO(0x003C);			// Turn off the LEDs
 }
 
 /*
@@ -227,12 +232,24 @@ void RTCInit(void) {
 	RTC->CR |= RTC_CR_SWR_MASK;		// reset all RTC registers
 	RTC->CR &= ~RTC_CR_SWR_MASK;	// clear SWR
 	RTC->TCR = 0x0000;				// clear compensation interval/time
-	RTC->TSR = 0x0000;				// clear TOF and TIF
+	RTC->TSR = 0x0001;				// clear TOF and TIF flags
 	RTC->CR |= RTC_CR_OSCE_MASK;	// enable oscillator
 	delay(DELAY_OSC_STAB);			// wait for the oscillator to stabilize
 	RTC->SR |= RTC_SR_TCE_MASK;		// enable counter
-	RTC->TAR = 0x0000;				// clear TAF
+	RTC->TAR = 0x0000;				// clear TAF flag
+	RTC->IER |= 0x0000;				// disable all RTC interrupts
+	NVIC_ClearPendingIRQ(RTC_IRQn); // clear pending interrupts
 	NVIC_EnableIRQ(RTC_IRQn);		// enable RTC interrupt
+}
+
+void PIT0Init(void) {
+	PIT->MCR = 0x00;								// enable PIT module
+	PIT->CHANNEL[0].LDVAL = 0xB71AFF;				// 250 ms period
+	PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TIE_MASK;	// timer interrupt enable
+	PIT->CHANNEL[0].TFLG = 0x01;					// clear interrupt flag
+	NVIC_ClearPendingIRQ(PIT0_IRQn); 				// clear pending interrupts
+	NVIC_EnableIRQ(PIT0_IRQn);						// enable PIT0 interrupt
+	PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TEN_MASK;	// timer enable
 }
 
 /*
@@ -271,6 +288,24 @@ void RTCResetTime(void) {
 	RTC->SR &= ~RTC_SR_TCE_MASK;		// Disable counter
 	RTC->TSR = 0U;						// Reset seconds register
 	RTC->SR |= RTC_SR_TCE_MASK;			// Enable counter
+}
+
+/*
+ * Fill the RTC alarm register by the converted value from dayTime structure
+ */
+void RTCSetAlarm(dayTime *time) {
+	uint32_t alarmSeconds = dayTimeToSeconds(time);
+	uint32_t currSeconds = RTC->TSR;
+	/* Elapsed days since RTC counter starts counting from 0 */
+	uint32_t daysElapsed = currSeconds / SECONDS_IN_A_DAY;
+	/* Make an absolute value of alarmSeconds (include elapsed days) */
+	alarmSeconds += daysElapsed * SECONDS_IN_A_DAY;
+	/* If the alarm is for another day, increment it by 1 day*/
+	if (alarmSeconds < currSeconds) {
+		alarmSeconds += SECONDS_IN_A_DAY;
+	}
+	RTC->IER |= RTC_IER_TAIE_MASK;				//Enable alarm interrupt
+	RTC->TAR = alarmSeconds;
 }
 
 /*
@@ -366,21 +401,11 @@ void RTC_IRQHandler(void)
 }
 
 /*
- * Fill the RTC alarm register by the converted value from dayTime structure
+ * Override the PIT0 IRQ handler.
  */
-void RTCSetAlarm(dayTime *time) {
-	uint32_t alarmSeconds = dayTimeToSeconds(time);
-	uint32_t currSeconds = RTC->TSR;
-	/* Elapsed days since RTC counter starts counting from 0 */
-	uint32_t daysElapsed = currSeconds / SECONDS_IN_A_DAY;
-	/* Make an absolute value of alarmSeconds (include elapsed days) */
-	alarmSeconds += daysElapsed * SECONDS_IN_A_DAY;
-	/* If the alarm is for another day, increment it by 1 day*/
-	if (alarmSeconds < currSeconds) {
-		alarmSeconds += SECONDS_IN_A_DAY;
-	}
-	RTC->IER |= RTC_IER_TAIE_MASK;				//Enable alarm interrupt
-	RTC->TAR = alarmSeconds;
+void PIT0_IRQHandler(void) {
+	SendStr(UARTChannel, "PIT! ");
+	PIT->CHANNEL[0].TFLG = 0x01;					// clear interrupt flag
 }
 
 /*
