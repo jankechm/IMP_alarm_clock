@@ -40,19 +40,20 @@ typedef struct _rtc_time
     uint8_t second; // Range 0-59
 } dayTime;
 
-/* Structure used for light and sound signalisation settings */
-typedef struct _alarmSignalling {
+/* Structure used for storing alarm settings */
+typedef struct _alarmOptions {
+	bool standBy;
 	uint8_t light;
 	uint8_t sound;
-} alarmSignalling;
+	dayTime time;
+} alarmOptions;
 
 /*
  * Global variables
  */
 UART_Type *UARTChannel = UART5;
 dayTime alarmTime = {0};
-alarmSignalling alarmChoice = {1, 1};
-bool alarmRings = false;
+alarmOptions alarmOps = {false, 1, 1, {0}};
 char g_StrMenu[] =
     "\r\n"
     "Please choose the sub demo to run:\r\n"
@@ -61,7 +62,9 @@ char g_StrMenu[] =
     "3) Set alarm.\r\n"
     "4) Second interrupt show (demo for 7s).\r\n"
 	"5) Get alarm time.\r\n"
-	"6) Clear alarm.\r\n"
+	"6) Stop alarm.\r\n"
+	"7) Turn on alarm stand-by mode.\r\n"
+	"8) Turn off alarm stand-by mode.\r\n"
 	"l) Choose the alarm light signalization.\r\n"
 	"s) Choose the alarm sound signalization.\r\n";
 
@@ -86,6 +89,9 @@ void RTCSetTime(dayTime *time);
 void RTCResetTime(void);
 void RTCSetAlarm(dayTime *time);
 void stopAlarm(void);
+void alarmStandBy(void);
+void alarmNotStandBy(void);
+void actualizeAlarm(void);
 void secondsToDayTime(uint32_t seconds, dayTime *time);
 uint32_t dayTimeToSeconds(dayTime *time);
 void dayTimeToStr(dayTime *dTime, char *strTime);
@@ -112,7 +118,7 @@ int main(void) {
 	PITInit();
 
   while(1) {
-	beep(DEF_BEEP_CYCLES, DEF_BEEP_HALF_PERIOD);
+	//beep(DEF_BEEP_CYCLES, DEF_BEEP_HALF_PERIOD);
 	SendStr(UARTChannel, g_StrMenu);
 	SendStr(UARTChannel, "\r\nSelect:\r\n");
 	opt = ReceiveCh(UARTChannel);
@@ -148,7 +154,7 @@ int main(void) {
 			break;
 		case '3':		// Set alarm
 			SendStr(UARTChannel, "Set alarm\r\n");
-			SendStr(UARTChannel, "Write day time in format like: \"10:10:10\"\r\n");
+			SendStr(UARTChannel, "Write alarm time in format like: \"10:10:10\"\r\n");
 			for (int i = 0; i < 8; i++) {
 				c = ReceiveCh(UARTChannel);
 				SendCh(UARTChannel, c);		// Link echo
@@ -181,46 +187,59 @@ int main(void) {
 		case '6':
 			stopAlarm();
 			break;
+		case '7':
+			SendStr(UARTChannel, "Alarm stand-by mode turned on.\r\n");
+			alarmStandBy();
+			break;
+		case '8':
+			SendStr(UARTChannel, "Alarm stand-by mode turned off.\r\n");
+			alarmNotStandBy();
 		case 'l':
-			SendStr(UARTChannel, "Choose the alarm light signalization {1, 2, 3}\r\n");
+			SendStr(UARTChannel, "Choose the alarm light signalization 0-3 (0 = no light)\r\n");
 			sigOpt = ReceiveCh(UARTChannel);
 			SendCh(UARTChannel, sigOpt);		// Link echo
 			SendStr(UARTChannel, "\r\n");
 			switch (sigOpt) {
+				case '0':
+					alarmOps.light = 0;
+					break;
 				case '1':
-					alarmChoice.light = 1;
+					alarmOps.light = 1;
 					break;
 				case '2':
-					alarmChoice.light = 2;
+					alarmOps.light = 2;
 					break;
 				case '3':
-					alarmChoice.light = 3;
+					alarmOps.light = 3;
 					break;
 				default:
 					SendStr(UARTChannel, "Bad option\r\n");
 					break;
 			}
 			break;
-			case 's':
-				SendStr(UARTChannel, "Choose the alarm sound signalization {1, 2, 3}\r\n");
-				sigOpt = ReceiveCh(UARTChannel);
-				SendCh(UARTChannel, sigOpt);		// Link echo
-				SendStr(UARTChannel, "\r\n");
-				switch (sigOpt) {
-					case '1':
-						alarmChoice.sound = 1;
-						break;
-					case '2':
-						alarmChoice.sound = 2;
-						break;
-					case '3':
-						alarmChoice.sound = 3;
-						break;
-					default:
-						SendStr(UARTChannel, "Bad option\r\n");
-						break;
-				}
-				break;
+		case 's':
+			SendStr(UARTChannel, "Choose the alarm sound signalization 0-3 (0 = no sound)\r\n");
+			sigOpt = ReceiveCh(UARTChannel);
+			SendCh(UARTChannel, sigOpt);		// Link echo
+			SendStr(UARTChannel, "\r\n");
+			switch (sigOpt) {
+				case '0':
+					alarmOps.sound = 0;
+					break;
+				case '1':
+					alarmOps.sound = 1;
+					break;
+				case '2':
+					alarmOps.sound = 2;
+					break;
+				case '3':
+					alarmOps.sound = 3;
+					break;
+				default:
+					SendStr(UARTChannel, "Bad option\r\n");
+					break;
+			}
+			break;
 		default:
 			SendStr(UARTChannel, "Bad option\r\n");
 			break;
@@ -317,7 +336,7 @@ void RTCInit(void) {
 	delay(DELAY_OSC_STAB);			// wait for the oscillator to stabilize
 	RTC->SR |= RTC_SR_TCE_MASK;		// enable counter
 	RTC->TAR = 0x0000;				// clear TAF flag
-	RTC->IER |= 0x0000;				// disable all RTC interrupts
+	RTC->IER = 0x0000;				// disable all RTC interrupts
 	NVIC_ClearPendingIRQ(RTC_IRQn); // clear pending interrupts
 	NVIC_EnableIRQ(RTC_IRQn);		// enable RTC interrupt
 }
@@ -380,6 +399,7 @@ void RTCSetTime(dayTime *time)
     RTC->SR &= ~RTC_SR_TCE_MASK;				// Disable counter
     RTC->TSR = seconds;							// Write seconds value to the register
     RTC->SR |= RTC_SR_TCE_MASK;					// Enable counter
+    actualizeAlarm();
 }
 
 /*
@@ -405,21 +425,58 @@ void RTCSetAlarm(dayTime *time) {
 	if (alarmSeconds < currSeconds) {
 		alarmSeconds += SECONDS_IN_A_DAY;
 	}
+	alarmOps.time = *time;
 	RTC->TAR = alarmSeconds;					// Fill the alarm register
+	alarmOps.standBy = true;
 	RTC->IER |= RTC_IER_TAIE_MASK;				// Enable alarm interrupt
+	SendStr(UARTChannel, "Alarm in stand-by mode.\r\n");
 }
 
 /*
  * Stop the alarm signalisation
  */
 void stopAlarm(void) {
+	SendStr(UARTChannel, "Stopping alarm.\r\n");
 	PIT->CHANNEL[0].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT0 disable
 	PIT->CHANNEL[0].TFLG = 0x01;					// clear PIT0 interrupt flag
 	PTB->PDOR |= ALL_MCU_LEDS;						// Turn off all MCU LEDS
+	//PTB->PDOR |= GPIO_PDOR_PDO(ALL_MCU_LEDS);		// Turn off the LEDs
 	PIT->CHANNEL[1].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT1 disable
 	PIT->CHANNEL[1].TFLG = 0x01;					// clear PIT1 interrupt flag
 	PTA->PDOR = GPIO_PDOR_PDO(0x0000);				// Turn off beeper
-	alarmRings = false;
+}
+
+/*
+ * Turn on the alarm stand-by mode
+ */
+void alarmStandBy(void) {
+	actualizeAlarm();
+	SendStr(UARTChannel, "Alarm in stand-by mode.\r\n");
+	alarmOps.standBy = true;
+	RTC->IER |= RTC_IER_TAIE_MASK;				// Enable alarm interrupt
+}
+
+/*
+ * Turn off the alarm stand-by mode
+ */
+void alarmNotStandBy(void) {
+	SendStr(UARTChannel, "Alarm not in stand-by mode.\r\n");
+	alarmOps.standBy = false;
+	RTC->IER &= ~RTC_IER_TAIE_MASK;				// Disable alarm interrupt
+}
+
+/*
+ * If the absolute alarm time is bigger than current absolute time + 1 whole day,
+ * the relative alarm time have not passed today - decrement the alarm time by 1 whole day
+ */
+void actualizeAlarm(void) {
+	uint32_t currSeconds = RTC->TSR;
+	uint32_t alarmSeconds = RTC->TAR;
+
+	if (alarmSeconds > currSeconds + SECONDS_IN_A_DAY) {
+		alarmSeconds -= SECONDS_IN_A_DAY;
+		RTC->TAR = alarmSeconds;					// Fill the alarm register
+	}
 }
 
 /*
@@ -505,7 +562,7 @@ void RTC_IRQHandler(void)
     	RTC->TAR = 0U;
     	/* Disable alarm interrupt */
     	RTC->IER &= ~RTC_IER_TAIE_MASK;
-
+    	/* Activate alarm signalizing */
 		SendStr(UARTChannel, "Alarm!\r\n");
 		PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT0 enable
 		PIT->CHANNEL[1].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT1 enable
@@ -516,7 +573,10 @@ void RTC_IRQHandler(void)
  * Override the PIT0 IRQ handler.
  */
 void PIT0_IRQHandler(void) {
-	switch (alarmChoice.light) {
+	switch (alarmOps.light) {
+		case 0:
+			PTB->PDOR |= ALL_MCU_LEDS;						// Turn off all MCU LEDS
+			break;
 		case 1:
 			lightSignalize1();
 			break;
@@ -537,7 +597,10 @@ void PIT0_IRQHandler(void) {
  * Override the PIT1 IRQ handler.
  */
 void PIT1_IRQHandler(void) {
-	switch (alarmChoice.sound) {
+	switch (alarmOps.sound) {
+		case 0:
+			PTA->PDOR = GPIO_PDOR_PDO(0x0000);				// Turn off beeper
+			break;
 		case 1:
 			soundSignalize1();
 			break;
@@ -560,6 +623,7 @@ void PIT1_IRQHandler(void) {
 void PORTE_IRQHandler(void) {
 	if (PORTE->ISFR & BTN_SW6) {
 		stopAlarm();
+		//beep(DEF_BEEP_CYCLES, DEF_BEEP_HALF_PERIOD);
 		PORTE->PCR[11] |= PORT_PCR_ISF_MASK;	// clear interrupt flag
 	}
 }
