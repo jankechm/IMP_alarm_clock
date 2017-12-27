@@ -13,6 +13,8 @@
 /*
  * Macros
  */
+#define DEF_BEEP_CYCLES (500U)
+#define DEF_BEEP_HALF_PERIOD (500U)
 #define	DELAY_OSC_STAB 0x600000
 #define	BUF_SIZE 1024
 #define SECONDS_IN_A_DAY (86400U)
@@ -25,6 +27,7 @@
 #define LED_D11 0x8					// PORT B, bit 3
 #define LED_D12 0x4					// PORT B, bit 2
 #define ALL_MCU_LEDS 0x003C			// PORT B, bits 2-5
+#define BTN_SW6 0x800 				// Port E, bit 11
 
 /*
  * Types
@@ -37,6 +40,7 @@ typedef struct _rtc_time
     uint8_t second; // Range 0-59
 } dayTime;
 
+/* Structure used for light and sound signalisation settings */
 typedef struct _alarmSignalling {
 	uint8_t light;
 	uint8_t sound;
@@ -48,6 +52,7 @@ typedef struct _alarmSignalling {
 UART_Type *UARTChannel = UART5;
 dayTime alarmTime = {0};
 alarmSignalling alarmChoice = {1, 1};
+bool alarmRings = false;
 char g_StrMenu[] =
     "\r\n"
     "Please choose the sub demo to run:\r\n"
@@ -68,13 +73,13 @@ void MCUInit(void);
 void PinInit(void);
 void UARTInit(UART_Type *base);
 void RTCInit(void);
+void PITInit(void);
 void PIT0Init(void);
-void RTC_IRQHandler(void);
-void PIT0_IRQHandler(void);
+void PIT1Init(void);
 void SendCh(UART_Type *base, char ch);
 char ReceiveCh(UART_Type *base);
 void SendStr(UART_Type *base, char *s);
-void beep(void);
+void beep(uint32_t cycles, uint32_t halfPeriod);
 void RTCGetTime(dayTime *time);
 void RTCGetAlarm(dayTime *time);
 void RTCSetTime(dayTime *time);
@@ -88,6 +93,9 @@ bool strToDayTime(dayTime *dTime, char *strTime);
 void lightSignalize1(void);
 void lightSignalize2(void);
 void lightSignalize3(void);
+void soundSignalize1(void);
+void soundSignalize2(void);
+void soundSignalize3(void);
 
 /*
  * Main
@@ -101,10 +109,10 @@ int main(void) {
 	PinInit();
 	UARTInit(UARTChannel);
 	RTCInit();
-	PIT0Init();
+	PITInit();
 
   while(1) {
-	beep();
+	beep(DEF_BEEP_CYCLES, DEF_BEEP_HALF_PERIOD);
 	SendStr(UARTChannel, g_StrMenu);
 	SendStr(UARTChannel, "\r\nSelect:\r\n");
 	opt = ReceiveCh(UARTChannel);
@@ -260,11 +268,20 @@ void PinInit(void) {
 	PORTB->PCR[3] = PORT_PCR_MUX(0x01); 		// MCU_LED2 D11
 	PORTB->PCR[2] = PORT_PCR_MUX(0x01); 		// MCU_LED3 D12
 
+	PORTE->PCR[11] |= PORT_PCR_ISF_MASK;		// Clear interrupt flag
+	PORTE->PCR[11] |= PORT_PCR_IRQC(0x0A);		// Interrupt on falling edge
+	PORTE->PCR[11] |= PORT_PCR_MUX(0x01);		// MCU_BUTTON4 SW6
+	PORTE->PCR[11] |= PORT_PCR_PE_MASK;			// Pull resistor enable
+	PORTE->PCR[11] |= PORT_PCR_PS_MASK;			// Pull up resistor select
+
 	PORTA->PCR[4] = PORT_PCR_MUX(0x01); 		// Beeper (PTA4)
 
 	PTA->PDDR = GPIO_PDDR_PDD(0x0010); 			// PTA4 as output
 	PTB->PDDR = GPIO_PDDR_PDD(ALL_MCU_LEDS); 	// PTB2/3/4/5 as output
 	PTB->PDOR |= GPIO_PDOR_PDO(ALL_MCU_LEDS);	// Turn off the LEDs
+
+	NVIC_ClearPendingIRQ(PORTE_IRQn); 			// clear pending interrupts of PORTE
+	NVIC_EnableIRQ(PORTE_IRQn);					// enable PORTE interrupt
 }
 
 /*
@@ -305,14 +322,35 @@ void RTCInit(void) {
 	NVIC_EnableIRQ(RTC_IRQn);		// enable RTC interrupt
 }
 
+/*
+ * Periodic interrupt timer initialization
+ */
+void PITInit() {
+	PIT->MCR = 0x00;	// enable PIT module
+	PIT0Init();			// initialize PIT0
+	PIT1Init();			// initialize PIT1
+}
+
+/*
+ * PIT0 initialization settings
+ */
 void PIT0Init(void) {
-	PIT->MCR = 0x00;								// enable PIT module
 	PIT->CHANNEL[0].LDVAL = 0xB71AFF;				// 250 ms period
 	PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TIE_MASK;	// timer interrupt enable
 	PIT->CHANNEL[0].TFLG = 0x01;					// clear interrupt flag
 	NVIC_ClearPendingIRQ(PIT0_IRQn); 				// clear pending interrupts
 	NVIC_EnableIRQ(PIT0_IRQn);						// enable PIT0 interrupt
-	//PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TEN_MASK;	// timer enable
+}
+
+/*
+ * PIT1 initialization settings
+ */
+void PIT1Init(void) {
+	PIT->CHANNEL[1].LDVAL = 0x89543FF;				// 3000 ms period
+	PIT->CHANNEL[1].TCTRL |= PIT_TCTRL_TIE_MASK;	// timer interrupt enable
+	PIT->CHANNEL[1].TFLG = 0x01;					// clear interrupt flag
+	NVIC_ClearPendingIRQ(PIT1_IRQn); 				// clear pending interrupts
+	NVIC_EnableIRQ(PIT1_IRQn);						// enable PIT1 interrupt
 }
 
 /*
@@ -367,16 +405,21 @@ void RTCSetAlarm(dayTime *time) {
 	if (alarmSeconds < currSeconds) {
 		alarmSeconds += SECONDS_IN_A_DAY;
 	}
-	RTC->IER |= RTC_IER_TAIE_MASK;				//Enable alarm interrupt
-	RTC->TAR = alarmSeconds;
+	RTC->TAR = alarmSeconds;					// Fill the alarm register
+	RTC->IER |= RTC_IER_TAIE_MASK;				// Enable alarm interrupt
 }
 
 /*
  * Stop the alarm signalisation
  */
 void stopAlarm(void) {
-	PIT->CHANNEL[0].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT disable
-	PTB->PDOR |= ALL_MCU_LEDS;						// Turn off all MCU LEDS;
+	PIT->CHANNEL[0].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT0 disable
+	PIT->CHANNEL[0].TFLG = 0x01;					// clear PIT0 interrupt flag
+	PTB->PDOR |= ALL_MCU_LEDS;						// Turn off all MCU LEDS
+	PIT->CHANNEL[1].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT1 disable
+	PIT->CHANNEL[1].TFLG = 0x01;					// clear PIT1 interrupt flag
+	PTA->PDOR = GPIO_PDOR_PDO(0x0000);				// Turn off beeper
+	alarmRings = false;
 }
 
 /*
@@ -463,12 +506,9 @@ void RTC_IRQHandler(void)
     	/* Disable alarm interrupt */
     	RTC->IER &= ~RTC_IER_TAIE_MASK;
 
-    	//RTCGetTime(&time);
-		//dayTimeToStr(&time, buf);
-		SendStr(UARTChannel, "Alarm! ");
-		//SendStr(UARTChannel, buf);
-		SendStr(UARTChannel, "\r\n");
-		PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT enable
+		SendStr(UARTChannel, "Alarm!\r\n");
+		PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT0 enable
+		PIT->CHANNEL[1].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT1 enable
     }
 }
 
@@ -490,7 +530,38 @@ void PIT0_IRQHandler(void) {
 			lightSignalize1();
 			break;
 	}
-	PIT->CHANNEL[0].TFLG = 0x01;					// clear interrupt flag
+	PIT->CHANNEL[0].TFLG = 0x01;			// clear interrupt flag
+}
+
+/*
+ * Override the PIT1 IRQ handler.
+ */
+void PIT1_IRQHandler(void) {
+	switch (alarmChoice.sound) {
+		case 1:
+			soundSignalize1();
+			break;
+		case 2:
+			soundSignalize2();
+			break;
+		case 3:
+			soundSignalize3();
+			break;
+		default:
+			soundSignalize1();
+			break;
+	}
+	PIT->CHANNEL[1].TFLG = 0x01;			// clear interrupt flag
+}
+
+/*
+ * Override the PORTE IRQ handler.
+ */
+void PORTE_IRQHandler(void) {
+	if (PORTE->ISFR & BTN_SW6) {
+		stopAlarm();
+		PORTE->PCR[11] |= PORT_PCR_ISF_MASK;	// clear interrupt flag
+	}
 }
 
 /*
@@ -514,7 +585,7 @@ void lightSignalize1(void) {
 			PTB->PTOR = (LED_D12 | LED_D9);		// turn off D12, turn on D9
 			break;
 		default:
-			PTB->PDOR |= ALL_MCU_LEDS;
+			PTB->PDOR |= ALL_MCU_LEDS;			// turn off all MCU LEDs
 			break;
 	}
 }
@@ -540,7 +611,7 @@ void lightSignalize2(void) {
 			PTB->PTOR = (LED_D9 | LED_D12); 	// turn off D9, turn on D12
 			break;
 		default:
-			PTB->PDOR |= ALL_MCU_LEDS;
+			PTB->PDOR |= ALL_MCU_LEDS;			// turn off all MCU LEDs
 			break;
 	}
 }
@@ -560,9 +631,37 @@ void lightSignalize3(void) {
 			PTB->PTOR = (LED_D9 | LED_D12); 	// turn off D9, D12
 			break;
 		default:
-			PTB->PDOR |= ALL_MCU_LEDS;
+			PTB->PDOR |= ALL_MCU_LEDS;			// turn off all MCU LEDs
 			break;
 	}
+}
+
+/*
+ * Start the sound signalization 1 witch the MCU beeper
+ */
+void soundSignalize1(void) {
+	beep(500U, 500U);
+	beep(781U, 400U);
+	beep(1388U, 300U);
+}
+
+/*
+ * Start the sound signalization 2 witch the MCU beeper
+ */
+void soundSignalize2(void) {
+	beep(1388U, 300U);
+	beep(781U, 400U);
+	beep(500U, 500U);
+}
+
+/*
+ * Start the sound signalization 3 witch the MCU beeper
+ */
+void soundSignalize3(void) {
+	beep(781U, 400U);
+	beep(1388U, 300U);
+	beep(781U, 400U);
+	beep(500U, 500U);
 }
 
 /*
@@ -594,12 +693,12 @@ void SendStr(UART_Type *base, char *s)  {
 /*
  * Beep from the beeper on PTA4
  */
-void beep(void) {
-	int q;
-	for (q = 0; q < 500; q++) {
-    	PTA->PDOR = GPIO_PDOR_PDO(0x0010);
-    	delay(500);
-    	PTA->PDOR = GPIO_PDOR_PDO(0x0000);
-    	delay(500);
-    }
+void beep(uint32_t cycles, uint32_t halfPeriod) {
+	uint32_t q;
+	for (q = 0; q < cycles; q++) {
+		PTA->PDOR = GPIO_PDOR_PDO(0x0010);
+		delay(halfPeriod);
+		PTA->PDOR = GPIO_PDOR_PDO(0x0000);
+		delay(halfPeriod);
+	}
 }
