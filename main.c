@@ -42,9 +42,11 @@ typedef struct _rtc_time
 
 /* Structure used for storing alarm settings */
 typedef struct _alarmOptions {
-	bool standBy;
-	uint8_t light;
-	uint8_t sound;
+	bool standBy;			// is or is not in standBy mode
+	uint8_t light;			// light signalization
+	uint8_t sound;			// sound signalization
+	uint8_t againCount;		// number of attempts to wake up
+	uint8_t againInterval;	// in minutes
 	dayTime time;
 } alarmOptions;
 
@@ -52,8 +54,8 @@ typedef struct _alarmOptions {
  * Global variables
  */
 UART_Type *UARTChannel = UART5;
-dayTime alarmTime = {0};
-alarmOptions alarmOps = {false, 1, 1, {0}};
+alarmOptions g_alarmOps = {false, 1, 1, 2, 10, {0}};
+bool g_alarmRings = false;
 char g_StrMenu[] =
     "\r\n"
     "Please choose the sub demo to run:\r\n"
@@ -66,7 +68,8 @@ char g_StrMenu[] =
 	"7) Turn on alarm stand-by mode.\r\n"
 	"8) Turn off alarm stand-by mode.\r\n"
 	"l) Choose the alarm light signalization.\r\n"
-	"s) Choose the alarm sound signalization.\r\n";
+	"s) Choose the alarm sound signalization.\r\n"
+	"a) Ring again later\r\n";
 
 /*
  * Prototypes
@@ -79,6 +82,7 @@ void RTCInit(void);
 void PITInit(void);
 void PIT0Init(void);
 void PIT1Init(void);
+void PIT2Init(void);
 void SendCh(UART_Type *base, char ch);
 char ReceiveCh(UART_Type *base);
 void SendStr(UART_Type *base, char *s);
@@ -186,6 +190,7 @@ int main(void) {
 			break;
 		case '6':
 			stopAlarm();
+			SendStr(UARTChannel, "Alarm signalization turned off.\r\n");
 			break;
 		case '7':
 			SendStr(UARTChannel, "Alarm stand-by mode turned on.\r\n");
@@ -201,16 +206,16 @@ int main(void) {
 			SendStr(UARTChannel, "\r\n");
 			switch (sigOpt) {
 				case '0':
-					alarmOps.light = 0;
+					g_alarmOps.light = 0;
 					break;
 				case '1':
-					alarmOps.light = 1;
+					g_alarmOps.light = 1;
 					break;
 				case '2':
-					alarmOps.light = 2;
+					g_alarmOps.light = 2;
 					break;
 				case '3':
-					alarmOps.light = 3;
+					g_alarmOps.light = 3;
 					break;
 				default:
 					SendStr(UARTChannel, "Bad option\r\n");
@@ -224,16 +229,16 @@ int main(void) {
 			SendStr(UARTChannel, "\r\n");
 			switch (sigOpt) {
 				case '0':
-					alarmOps.sound = 0;
+					g_alarmOps.sound = 0;
 					break;
 				case '1':
-					alarmOps.sound = 1;
+					g_alarmOps.sound = 1;
 					break;
 				case '2':
-					alarmOps.sound = 2;
+					g_alarmOps.sound = 2;
 					break;
 				case '3':
-					alarmOps.sound = 3;
+					g_alarmOps.sound = 3;
 					break;
 				default:
 					SendStr(UARTChannel, "Bad option\r\n");
@@ -348,6 +353,7 @@ void PITInit() {
 	PIT->MCR = 0x00;	// enable PIT module
 	PIT0Init();			// initialize PIT0
 	PIT1Init();			// initialize PIT1
+	PIT2Init();			// initialize PIT2
 }
 
 /*
@@ -370,6 +376,17 @@ void PIT1Init(void) {
 	PIT->CHANNEL[1].TFLG = 0x01;					// clear interrupt flag
 	NVIC_ClearPendingIRQ(PIT1_IRQn); 				// clear pending interrupts
 	NVIC_EnableIRQ(PIT1_IRQn);						// enable PIT1 interrupt
+}
+
+/*
+ * PIT2 initialization settings
+ */
+void PIT2Init(void) {
+	PIT->CHANNEL[2].LDVAL = 0x1406F3FF;				// 7000 ms period
+	PIT->CHANNEL[2].TCTRL |= PIT_TCTRL_TIE_MASK;	// timer interrupt enable
+	PIT->CHANNEL[2].TFLG = 0x01;					// clear interrupt flag
+	NVIC_ClearPendingIRQ(PIT2_IRQn); 				// clear pending interrupts
+	NVIC_EnableIRQ(PIT2_IRQn);						// enable PIT2 interrupt
 }
 
 /*
@@ -425,9 +442,9 @@ void RTCSetAlarm(dayTime *time) {
 	if (alarmSeconds < currSeconds) {
 		alarmSeconds += SECONDS_IN_A_DAY;
 	}
-	alarmOps.time = *time;
+	g_alarmOps.time = *time;
 	RTC->TAR = alarmSeconds;					// Fill the alarm register
-	alarmOps.standBy = true;
+	g_alarmOps.standBy = true;
 	RTC->IER |= RTC_IER_TAIE_MASK;				// Enable alarm interrupt
 	SendStr(UARTChannel, "Alarm in stand-by mode.\r\n");
 }
@@ -436,14 +453,13 @@ void RTCSetAlarm(dayTime *time) {
  * Stop the alarm signalisation
  */
 void stopAlarm(void) {
-	SendStr(UARTChannel, "Stopping alarm.\r\n");
 	PIT->CHANNEL[0].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT0 disable
 	PIT->CHANNEL[0].TFLG = 0x01;					// clear PIT0 interrupt flag
 	PTB->PDOR |= ALL_MCU_LEDS;						// Turn off all MCU LEDS
-	//PTB->PDOR |= GPIO_PDOR_PDO(ALL_MCU_LEDS);		// Turn off the LEDs
 	PIT->CHANNEL[1].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT1 disable
 	PIT->CHANNEL[1].TFLG = 0x01;					// clear PIT1 interrupt flag
 	PTA->PDOR = GPIO_PDOR_PDO(0x0000);				// Turn off beeper
+	g_alarmRings = false;
 }
 
 /*
@@ -452,7 +468,7 @@ void stopAlarm(void) {
 void alarmStandBy(void) {
 	actualizeAlarm();
 	SendStr(UARTChannel, "Alarm in stand-by mode.\r\n");
-	alarmOps.standBy = true;
+	g_alarmOps.standBy = true;
 	RTC->IER |= RTC_IER_TAIE_MASK;				// Enable alarm interrupt
 }
 
@@ -461,7 +477,7 @@ void alarmStandBy(void) {
  */
 void alarmNotStandBy(void) {
 	SendStr(UARTChannel, "Alarm not in stand-by mode.\r\n");
-	alarmOps.standBy = false;
+	g_alarmOps.standBy = false;
 	RTC->IER &= ~RTC_IER_TAIE_MASK;				// Disable alarm interrupt
 }
 
@@ -557,6 +573,7 @@ void RTC_IRQHandler(void)
 {
     dayTime time;
 
+    /* Check the alarm flag */
 	if (RTC->SR & RTC_SR_TAF_MASK) {
     	/* Clear alarm flag */
     	RTC->TAR = 0U;
@@ -566,6 +583,8 @@ void RTC_IRQHandler(void)
 		SendStr(UARTChannel, "Alarm!\r\n");
 		PIT->CHANNEL[0].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT0 enable
 		PIT->CHANNEL[1].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT1 enable
+		PIT->CHANNEL[2].TCTRL |= PIT_TCTRL_TEN_MASK;	// PIT2 enable
+		g_alarmRings = true;
     }
 }
 
@@ -573,7 +592,7 @@ void RTC_IRQHandler(void)
  * Override the PIT0 IRQ handler.
  */
 void PIT0_IRQHandler(void) {
-	switch (alarmOps.light) {
+	switch (g_alarmOps.light) {
 		case 0:
 			PTB->PDOR |= ALL_MCU_LEDS;						// Turn off all MCU LEDS
 			break;
@@ -597,7 +616,7 @@ void PIT0_IRQHandler(void) {
  * Override the PIT1 IRQ handler.
  */
 void PIT1_IRQHandler(void) {
-	switch (alarmOps.sound) {
+	switch (g_alarmOps.sound) {
 		case 0:
 			PTA->PDOR = GPIO_PDOR_PDO(0x0000);				// Turn off beeper
 			break;
@@ -618,12 +637,23 @@ void PIT1_IRQHandler(void) {
 }
 
 /*
+ * Override the PIT2 IRQ handler.
+ */
+void PIT2_IRQHandler(void) {
+	stopAlarm();									// stop alarm signalization
+	// TODO: set new alarm
+	PIT->CHANNEL[2].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT2 disable
+	PIT->CHANNEL[2].TFLG = 0x01;					// clear interrupt flag
+}
+
+/*
  * Override the PORTE IRQ handler.
  */
 void PORTE_IRQHandler(void) {
 	if (PORTE->ISFR & BTN_SW6) {
 		stopAlarm();
 		//beep(DEF_BEEP_CYCLES, DEF_BEEP_HALF_PERIOD);
+		SendStr(UARTChannel, "Alarm signalization turned off.\r\n");
 		PORTE->PCR[11] |= PORT_PCR_ISF_MASK;	// clear interrupt flag
 	}
 }
