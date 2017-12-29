@@ -106,14 +106,20 @@ void lightSignalize3(void);
 void soundSignalize1(void);
 void soundSignalize2(void);
 void soundSignalize3(void);
+void cmdGetTime(void);
+void cmdSetTime(void);
+void cmdSetAlarmTime(void);
+void cmdGetAlarmTime(void);
+void cmdLightSignalization(void);
+void cmdSoundSignalization(void);
+void cmdSetAlarmAgainInterval(void);
+void cmdSetAlarmAgainCount(void);
 
 /*
  * Main
  */
 int main(void) {
-	dayTime time;
-	char c, buf[BUF_SIZE] = "";
-	uint8_t opt, sigOpt;
+	uint8_t opt;
 
 	MCUInit();
 	PinInit();
@@ -131,130 +137,30 @@ int main(void) {
 
 	switch (opt) {
 		case '1':		// Getting time by RTC seconds interrupt
-			RTC->IER |= RTC_IER_TSIE_MASK;		// enable RTC seconds interrupt
-			opt = ReceiveCh(g_UARTChannel);
-			RTC->IER &= ~RTC_IER_TSIE_MASK;		// disable seconds interrupt
-			SendStr(g_UARTChannel, "\r\n");
-			SendCh(g_UARTChannel, opt);
-			SendStr(g_UARTChannel, "\r\n");
+			cmdGetTime();
 			break;
-		case '2':		// Set time
-			SendStr(g_UARTChannel, "Set time\r\n");
-			SendStr(g_UARTChannel, "Write day time in format: \"hh:mm:ss\"\r\n");
-			for (int i = 0; i < 8; i++) {
-				c = ReceiveCh(g_UARTChannel);
-				SendCh(g_UARTChannel, c);		// Link echo
-				buf[i] = c;
-			}
-			SendStr(g_UARTChannel, "\r\n");
-			if (strToDayTime(&time, buf)) {
-				RTCSetTime(&time);
-				SendStr(g_UARTChannel, "OK\r\n");
-			}
-			else {
-				SendStr(g_UARTChannel, "Invalid input format\r\n");
-			}
+		case '2':		// Setting RTC time
+			cmdSetTime();
 			break;
-		case '3':		// Set alarm
-			SendStr(g_UARTChannel, "Set alarm\r\n");
-			SendStr(g_UARTChannel, "Write alarm time in format: \"hh:mm:ss\"\r\n");
-			for (int i = 0; i < 8; i++) {
-				c = ReceiveCh(g_UARTChannel);
-				SendCh(g_UARTChannel, c);		// Link echo
-				buf[i] = c;
-			}
-			SendStr(g_UARTChannel, "\r\n");
-			if (strToDayTime(&time, buf)) {
-				g_alarmOps.time = time;
-				RTCAlarmStandByOn();
-				SendStr(g_UARTChannel, "OK\r\n");
-			}
-			else {
-				SendStr(g_UARTChannel, "Invalid input format\r\n");
-			}
+		case '3':		// Setting RTC alarm time
+			cmdSetAlarmTime();
 			break;
-
-		case '4':		// Get alarm time
-			dayTimeToStr(&(g_alarmOps.time), buf);
-			SendStr(g_UARTChannel, buf);
-			SendStr(g_UARTChannel, "\r\n");
+		case '4':		// Getting RTC alarm time
+			cmdGetAlarmTime();
 			break;
-		case 'l':
-			SendStr(g_UARTChannel, "Choose the alarm light signalization 0-3 (0 = no light)\r\n");
-			sigOpt = ReceiveCh(g_UARTChannel);
-			SendCh(g_UARTChannel, sigOpt);		// Link echo
-			SendStr(g_UARTChannel, "\r\n");
-			switch (sigOpt) {
-				case '0':
-					g_alarmOps.light = 0;
-					break;
-				case '1':
-					g_alarmOps.light = 1;
-					break;
-				case '2':
-					g_alarmOps.light = 2;
-					break;
-				case '3':
-					g_alarmOps.light = 3;
-					break;
-				default:
-					SendStr(g_UARTChannel, "Bad option\r\n");
-					break;
-			}
+		case 'l':		// Choosing the alarm light signalization
+			cmdLightSignalization();
 			break;
-		case 's':
-			SendStr(g_UARTChannel, "Choose the alarm sound signalization 0-3 (0 = no sound)\r\n");
-			sigOpt = ReceiveCh(g_UARTChannel);
-			SendCh(g_UARTChannel, sigOpt);		// Link echo
-			SendStr(g_UARTChannel, "\r\n");
-			switch (sigOpt) {
-				case '0':
-					g_alarmOps.sound = 0;
-					break;
-				case '1':
-					g_alarmOps.sound = 1;
-					break;
-				case '2':
-					g_alarmOps.sound = 2;
-					break;
-				case '3':
-					g_alarmOps.sound = 3;
-					break;
-				default:
-					SendStr(g_UARTChannel, "Bad option\r\n");
-					break;
-			}
+		case 's':		// Choosing the alarm sound signalization
+			cmdSoundSignalization();
 			break;
-		case 'i':
-			SendStr(g_UARTChannel, "Set the interval, in which the alarm "
-					"will be triggered again, if it was not turned off.\r\n"
-					"Write the time interval in format: \"hh:mm:ss\"\r\n");
-			for (int i = 0; i < 8; i++) {
-				c = ReceiveCh(g_UARTChannel);
-				SendCh(g_UARTChannel, c);		// Link echo
-				buf[i] = c;
-			}
-			SendStr(g_UARTChannel, "\r\n");
-			if (strToDayTime(&(g_alarmOps.againInterval), buf)) {
-				SendStr(g_UARTChannel, "OK\r\n");
-			}
-			else {
-				SendStr(g_UARTChannel, "Invalid input format\r\n");
-			}
+		case 'i':		// Setting the alarm again interval
+			cmdSetAlarmAgainInterval();
 			break;
-		case 'a':
-			SendStr(g_UARTChannel, "Set the number of attempts to wake up (0-5)\r\n");
-			c = ReceiveCh(g_UARTChannel);
-			SendCh(g_UARTChannel, c);		// Link echo
-			SendStr(g_UARTChannel, "\r\n");
-			if (c >= '0' && c <= '5') {
-				g_alarmOps.againCount = c - 0x30;
-			}
-			else {
-				SendStr(g_UARTChannel, "Bad option\r\n");
-			}
+		case 'a':		// Setting the alarm again count
+			cmdSetAlarmAgainCount();
 			break;
-		case 'h':
+		case 'h':		// Showing help
 			SendStr(g_UARTChannel, g_StrMenu);
 			break;
 		default:
@@ -798,5 +704,176 @@ void beep(uint32_t cycles, uint32_t halfPeriod) {
 		delay(halfPeriod);
 		PTA->PDOR = GPIO_PDOR_PDO(0x0000);
 		delay(halfPeriod);
+	}
+}
+
+/*
+ * Getting time by RTC seconds interrupt
+ */
+void cmdGetTime(void) {
+	char c;
+	RTC->IER |= RTC_IER_TSIE_MASK;		// enable RTC seconds interrupt
+	c = ReceiveCh(g_UARTChannel);
+	RTC->IER &= ~RTC_IER_TSIE_MASK;		// disable seconds interrupt
+	SendStr(g_UARTChannel, "\r\n");
+	SendCh(g_UARTChannel, c);			// link echo
+	SendStr(g_UARTChannel, "\r\n");
+}
+
+/*
+ * Setting RTC time
+ */
+void cmdSetTime(void) {
+	char c, buf[] = "00:00:00";
+	dayTime time;
+
+	SendStr(g_UARTChannel, "Set time\r\n");
+	SendStr(g_UARTChannel, "Write day time in format: \"hh:mm:ss\"\r\n");
+	for (uint8_t i = 0; i < 8; i++) {
+		if (i == 2 || i == 5) {
+			SendCh(g_UARTChannel, ':');
+			buf[i] = ':';
+		}
+		else {
+			c = ReceiveCh(g_UARTChannel);
+			SendCh(g_UARTChannel, c);		// Link echo
+			buf[i] = c;
+		}
+	}
+	SendStr(g_UARTChannel, "\r\n");
+	if (strToDayTime(&time, buf)) {
+		RTCSetTime(&time);
+		SendStr(g_UARTChannel, "OK\r\n");
+	}
+	else {
+		SendStr(g_UARTChannel, "Invalid input format\r\n");
+	}
+}
+
+/*
+ * Schedule RTC alarm time
+ */
+void cmdSetAlarmTime(void) {
+	char c, buf[] = "00:00:00";
+	dayTime time;
+
+	SendStr(g_UARTChannel, "Set alarm\r\n");
+	SendStr(g_UARTChannel, "Write alarm time in format: \"hh:mm:ss\"\r\n");
+	for (uint8_t i = 0; i < 8; i++) {
+		if (i == 2 || i == 5) {
+			SendCh(g_UARTChannel, ':');
+			buf[i] = ':';
+		}
+		else {
+			c = ReceiveCh(g_UARTChannel);
+			SendCh(g_UARTChannel, c);		// Link echo
+			buf[i] = c;
+		}
+	}
+	SendStr(g_UARTChannel, "\r\n");
+	if (strToDayTime(&time, buf)) {
+		g_alarmOps.time = time;
+		RTCAlarmStandByOn();
+		SendStr(g_UARTChannel, "OK\r\n");
+	}
+	else {
+		SendStr(g_UARTChannel, "Invalid input format\r\n");
+	}
+}
+
+/*
+ * Getting scheduled RTC alarm time
+ */
+void cmdGetAlarmTime(void) {
+	char buf[] = "00:00:00";
+
+	dayTimeToStr(&(g_alarmOps.time), buf);
+	SendStr(g_UARTChannel, buf);
+	SendStr(g_UARTChannel, "\r\n");
+}
+
+/*
+ * Choosing alarm light signalization
+ */
+void cmdLightSignalization(void) {
+	char c;
+
+	SendStr(g_UARTChannel, "Choose the alarm light signalization 0-3 (0 = no light)\r\n");
+	c = ReceiveCh(g_UARTChannel);
+	SendCh(g_UARTChannel, c);			// Link echo
+	SendStr(g_UARTChannel, "\r\n");
+	if (c >= '0' && c <= '3') {			// Check limits
+		g_alarmOps.light = c - 0x30;	// Store chosen option in integer format
+	}
+	else {
+		SendStr(g_UARTChannel, "Bad option\r\n");
+	}
+}
+
+/*
+ * Choosing alarm sound signalization
+ */
+void cmdSoundSignalization(void) {
+	char c;
+
+	SendStr(g_UARTChannel, "Choose the alarm sound signalization 0-3 (0 = no sound)\r\n");
+	c = ReceiveCh(g_UARTChannel);
+	SendCh(g_UARTChannel, c);			// Link echo
+	SendStr(g_UARTChannel, "\r\n");
+	if (c >= '0' && c <= '3') {			// Check limits
+		g_alarmOps.sound = c - 0x30;	// Store chosen option in integer format
+	}
+	else {
+		SendStr(g_UARTChannel, "Bad option\r\n");
+	}
+}
+
+/*
+ * Setting the interval, in which the RTC alarm will be triggered again,
+ * if it has not yet been turned off
+ */
+void cmdSetAlarmAgainInterval(void) {
+	char c, buf[] = "00:00:00";
+
+	SendStr(g_UARTChannel, "Set the interval, after which the alarm "
+			"will be triggered again, if it has not yet been turned off.\r\n"
+			"Write the time interval in format: \"hh:mm:ss\"\r\n");
+	for (uint8_t i = 0; i < 8; i++) {
+		if (i == 2 || i == 5) {
+			SendCh(g_UARTChannel, ':');
+			buf[i] = ':';
+		}
+		else {
+			c = ReceiveCh(g_UARTChannel);
+			SendCh(g_UARTChannel, c);		// Link echo
+			buf[i] = c;
+		}
+	}
+	SendStr(g_UARTChannel, "\r\n");
+	/* Convert to dayTime and check the result */
+	if (strToDayTime(&(g_alarmOps.againInterval), buf)) {
+		SendStr(g_UARTChannel, "OK\r\n");
+	}
+	else {
+		SendStr(g_UARTChannel, "Invalid input format\r\n");
+	}
+}
+
+/*
+ * Setting the number of additional attempts to wake up
+ */
+void cmdSetAlarmAgainCount(void) {
+	char c;
+
+	SendStr(g_UARTChannel, "Set the number of attempts to wake up (0-5)\r\n");
+	c = ReceiveCh(g_UARTChannel);
+	SendCh(g_UARTChannel, c);				// Link echo
+	SendStr(g_UARTChannel, "\r\n");
+
+	if (c >= '0' && c <= '5') {				// Check limits
+		g_alarmOps.againCount = c - 0x30;	// Store chosen option in integer format
+	}
+	else {
+		SendStr(g_UARTChannel, "Bad option\r\n");
 	}
 }
