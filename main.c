@@ -1,8 +1,23 @@
 /**
+ * Author: Marek Jankech, xjanke01
+ * Date: 29.12.2017
+ * 90% original
  * Used:
- * 06-imp-demo-FITkit3-src/Sources/main.c
- * Laboratorni uloha c. 1 z predmetu IMP
- * KSDK demo app - rtc_func/drivers/fsl_rtc.c
+ *  from 06-imp-demo-FITkit3-src/Sources/main.c:
+ *  - 100% of delay() in my delay()
+ *  - 66% of MCUInit() in my MCUInit()
+ *  - some macros
+ *  from Laboratorni uloha c. 1 z predmetu IMP:
+ *  - 90% of SendCh() in my Sench()
+ *  - 90% of SendStr() in my SendStr()
+ *  - 70% of beep() in my beep()
+ *  from KSDK demo app - rtc_func/drivers/fsl_rtc.c:
+ *  - 30% of RTC_ConvertSecondsToDatetime() in my secondsToDayTime()
+ *  - 60% of RTC_GetDatetime() in my RTCGetTime()
+ *  - some macros
+ *  from KSDK demo app - rtc_func/sources/rtc_func.c:
+ *  - 60% of CommandSeconds() in my dayTimeToStr()
+ *  - 20% of main()/switch()/case '2' in my strToDayTime()
  **/
 
 #include <string.h>
