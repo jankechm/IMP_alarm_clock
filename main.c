@@ -1,6 +1,6 @@
 /**
  * Author: Marek Jankech, xjanke01
- * Date: 29.12.2017
+ * Date: 31.12.2017
  * 90% original
  * Used:
  *  from 06-imp-demo-FITkit3-src/Sources/main.c:
@@ -48,27 +48,27 @@
  * Types
  */
 /* Structure used for storing hours, minutes and seconds from the time of the day */
-typedef struct _rtc_time {
+typedef struct _day_time {
     uint8_t hour;   // Range 0-23
     uint8_t minute; // Range 0-59
     uint8_t second; // Range 0-59
-} dayTime;
+} dayTime_t;
 
 /* Structure used for storing alarm settings */
-typedef struct _alarmOptions {
+typedef struct _alarmOps {
 	bool standBy;			// is or is not in standBy mode
 	uint8_t light;			// light signalization
 	uint8_t sound;			// sound signalization
 	uint8_t againCount;		// number of attempts to wake up
-	dayTime againInterval;	// time after which the next attempt to wake up triggers
-	dayTime time;			// alarm time
-} alarmOptions;
+	dayTime_t againInterval;	// time after which the next attempt to wake up triggers
+	dayTime_t time;			// alarm time
+} alarmOps_t;
 
 /*
  * Global variables
  */
 UART_Type *g_UARTChannel = UART5;
-alarmOptions g_alarmOps = {false, 1, 1, 2, {0, 10, 0}, {0}};
+alarmOps_t g_alarmOps = {false, 1, 1, 2, {0, 10, 0}, {0}};
 volatile bool g_alarmRings = false;
 volatile uint8_t g_alarmAttempts = 0;
 static char g_StrMenu[] =
@@ -104,17 +104,17 @@ void SendCh(UART_Type *base, char ch);
 char ReceiveCh(UART_Type *base);
 void SendStr(UART_Type *base, char *s);
 void beep(uint32_t cycles, uint32_t halfPeriod);
-void RTCGetTime(dayTime *time);
-void RTCSetTime(dayTime *time);
+void RTCGetTime(dayTime_t *time);
+void RTCSetTime(dayTime_t *time);
 void RTCResetTime(void);
-void stopAlarmSignalization(void);
+void stopAlarmSignal(void);
 void RTCAlarmStandByOn(void);
 void RTCAlarmStandByOff(void);
 void RTCActualizeAlarm(void);
-void secondsToDayTime(uint32_t seconds, dayTime *time);
-uint32_t dayTimeToSeconds(dayTime *time);
-void dayTimeToStr(dayTime *dTime, char *strTime);
-bool strToDayTime(dayTime *dTime, char *strTime);
+void secondsToDayTime(uint32_t seconds, dayTime_t *time);
+uint32_t dayTimeToSeconds(dayTime_t *time);
+void dayTimeToStr(dayTime_t *dTime, char *strTime);
+bool strToDayTime(dayTime_t *dTime, char *strTime);
 void lightSignalize1(void);
 void lightSignalize2(void);
 void lightSignalize3(void);
@@ -125,8 +125,8 @@ void cmdGetTime(void);
 void cmdSetTime(void);
 void cmdSetAlarmTime(void);
 void cmdGetAlarmTime(void);
-void cmdLightSignalization(void);
-void cmdSoundSignalization(void);
+void cmdSetLightSignal(void);
+void cmdSetSoundSignal(void);
 void cmdSetAlarmAgainInterval(void);
 void cmdSetAlarmAgainCount(void);
 
@@ -164,10 +164,10 @@ int main(void) {
 			cmdGetAlarmTime();
 			break;
 		case 'l':		// Choosing the alarm light signalization
-			cmdLightSignalization();
+			cmdSetLightSignal();
 			break;
 		case 's':		// Choosing the alarm sound signalization
-			cmdSoundSignalization();
+			cmdSetSoundSignal();
 			break;
 		case 'i':		// Setting the alarm again interval
 			cmdSetAlarmAgainInterval();
@@ -312,7 +312,7 @@ void PIT2Init(void) {
 /*
  * Fill the dayTime structure by the converted value from RTC seconds register
  */
-void RTCGetTime(dayTime *time)
+void RTCGetTime(dayTime_t *time)
 {
     uint32_t seconds = RTC->TSR;
     secondsToDayTime(seconds, time);
@@ -321,7 +321,7 @@ void RTCGetTime(dayTime *time)
 /*
  * Fill the RTC seconds register by the converted value from dayTime structure
  */
-void RTCSetTime(dayTime *time)
+void RTCSetTime(dayTime_t *time)
 {
     uint32_t seconds = dayTimeToSeconds(time);	// Get seconds from dayTime
     RTC->SR &= ~RTC_SR_TCE_MASK;				// Disable counter
@@ -342,13 +342,15 @@ void RTCResetTime(void) {
 /*
  * Stop the light and sound alarm signalization
  */
-void stopAlarmSignalization(void) {
+void stopAlarmSignal(void) {
 	PIT->CHANNEL[0].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT0 disable
 	PIT->CHANNEL[0].TFLG = 0x01;					// clear PIT0 interrupt flag
 	PTB->PDOR |= ALL_MCU_LEDS;						// Turn off all MCU LEDS
 	PIT->CHANNEL[1].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT1 disable
 	PIT->CHANNEL[1].TFLG = 0x01;					// clear PIT1 interrupt flag
 	PTA->PDOR = GPIO_PDOR_PDO(0x0000);				// Turn off beeper
+	PIT->CHANNEL[2].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT2 disable
+	PIT->CHANNEL[2].TFLG = 0x01;					// clear PIT2 interrupt flag
 	g_alarmRings = false;
 }
 
@@ -358,7 +360,6 @@ void stopAlarmSignalization(void) {
 void RTCAlarmStandByOn(void) {
 	g_alarmAttempts = 0;						// Reset attempts to wake up
 	g_alarmOps.standBy = true;
-	RTCActualizeAlarm();						// Actualize RTC alarm register
 	SendStr(g_UARTChannel, "\r\nAlarm in stand-by mode.\r\n");
 	RTC->IER |= RTC_IER_TAIE_MASK;				// Enable alarm interrupt
 	PTB->PCOR = LED_D12;						// Turn on D12 - alarm stand-by indicator
@@ -397,7 +398,7 @@ void RTCActualizeAlarm(void) {
 /*
  * Convert seconds from RTC counter to dayTime
  */
-void secondsToDayTime(uint32_t seconds, dayTime *time)
+void secondsToDayTime(uint32_t seconds, dayTime_t *time)
 {
     uint32_t secondsRemaining = seconds;
 
@@ -414,7 +415,7 @@ void secondsToDayTime(uint32_t seconds, dayTime *time)
 /*
  * Convert dayTime values to single value of seconds
  */
-uint32_t dayTimeToSeconds(dayTime *time) {
+uint32_t dayTimeToSeconds(dayTime_t *time) {
 	uint32_t seconds = time->hour * SECONDS_IN_AN_HOUR;
 	seconds += time->minute * SECONDS_IN_A_MINUTE;
 	seconds += time->second;
@@ -424,7 +425,7 @@ uint32_t dayTimeToSeconds(dayTime *time) {
 /*
  * Convert dayTime values to string like "\r00:00:00"
  */
-void dayTimeToStr(dayTime *dTime, char *strTime) {
+void dayTimeToStr(dayTime_t *dTime, char *strTime) {
 	strTime[0] = '\r';
 	strTime[1] = ((dTime->hour / 10) + 0x30);
 	strTime[2] = ((dTime->hour % 10) + 0x30);
@@ -439,7 +440,7 @@ void dayTimeToStr(dayTime *dTime, char *strTime) {
 /*
  * Convert string like "00:00:00" to dayTime values
  */
-bool strToDayTime(dayTime *dTime, char *strTime) {
+bool strToDayTime(dayTime_t *dTime, char *strTime) {
 	bool succ = false;
 	uint32_t result;
 	uint16_t hour, minute, second;
@@ -470,7 +471,7 @@ bool strToDayTime(dayTime *dTime, char *strTime) {
  */
 void RTC_IRQHandler(void)
 {
-    dayTime time;
+    dayTime_t time;
 
     /* Check the alarm flag */
 	if (RTC->SR & RTC_SR_TAF_MASK) {
@@ -487,7 +488,7 @@ void RTC_IRQHandler(void)
 
 void RTC_Seconds_IRQHandler(void)
 {
-	dayTime time;
+	dayTime_t time;
 	char buf[] = "\r00:00:00";
 
 	RTCGetTime(&time);
@@ -549,7 +550,7 @@ void PIT1_IRQHandler(void) {
 void PIT2_IRQHandler(void) {
 	uint32_t currSeconds = RTC->TSR;
 
-	stopAlarmSignalization();						// Turn off alarm light and sound signalization
+	stopAlarmSignal();				// Turn off alarm light and sound signalization
 	if (g_alarmAttempts < g_alarmOps.againCount) {
 		RTC->TAR = currSeconds + dayTimeToSeconds(&(g_alarmOps.againInterval));	// Schedule next alarm triggering
 		PTB->PCOR = LED_D12;						// Turn on D12 - alarm stand-by indicator
@@ -558,8 +559,6 @@ void PIT2_IRQHandler(void) {
 	else {
 		RTCAlarmStandByOff();		// Turn off alarm stand-by mode
 	}
-	PIT->CHANNEL[2].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT2 disable
-	PIT->CHANNEL[2].TFLG = 0x01;					// clear interrupt flag
 }
 
 /*
@@ -570,12 +569,11 @@ void PORTE_IRQHandler(void) {
 	if (PORTE->ISFR & BTN_SW6) {
 		/* Toggle alarm stand-by mode on/off */
 		if (g_alarmOps.standBy) {
-			stopAlarmSignalization();	// Turn off alarm light and sound signalization
+			stopAlarmSignal();			// Turn off alarm light and sound signalization
 			RTCAlarmStandByOff();		// Turn off alarm stand-by mode
-			PIT->CHANNEL[2].TCTRL &= ~PIT_TCTRL_TEN_MASK;	// PIT2 disable
-			PIT->CHANNEL[2].TFLG = 0x01;					// clear interrupt flag
 		}
 		else {
+			RTCActualizeAlarm();		// actualize alarm register
 			RTCAlarmStandByOn();		// Turn on alarm stand-by mode
 		}
 		beep(DEF_BEEP_CYCLES, DEF_BEEP_HALF_PERIOD);
@@ -740,13 +738,13 @@ void cmdGetTime(void) {
  */
 void cmdSetTime(void) {
 	char c, buf[] = "00:00:00";
-	dayTime time;
+	dayTime_t time;
 
 	SendStr(g_UARTChannel, "Set time\r\n");
 	SendStr(g_UARTChannel, "Write day time in format: \"hh:mm:ss\"\r\n");
 	for (uint8_t i = 0; i < 8; i++) {
 		if (i == 2 || i == 5) {
-			SendCh(g_UARTChannel, ':');
+			SendCh(g_UARTChannel, ':');		// delimiter auto-appending
 			buf[i] = ':';
 		}
 		else {
@@ -770,13 +768,13 @@ void cmdSetTime(void) {
  */
 void cmdSetAlarmTime(void) {
 	char c, buf[] = "00:00:00";
-	dayTime time;
+	dayTime_t time;
 
 	SendStr(g_UARTChannel, "Set alarm\r\n");
 	SendStr(g_UARTChannel, "Write alarm time in format: \"hh:mm:ss\"\r\n");
 	for (uint8_t i = 0; i < 8; i++) {
 		if (i == 2 || i == 5) {
-			SendCh(g_UARTChannel, ':');
+			SendCh(g_UARTChannel, ':');		// delimiter auto-appending
 			buf[i] = ':';
 		}
 		else {
@@ -788,7 +786,8 @@ void cmdSetAlarmTime(void) {
 	SendStr(g_UARTChannel, "\r\n");
 	if (strToDayTime(&time, buf)) {
 		g_alarmOps.time = time;
-		RTCAlarmStandByOn();
+		RTCActualizeAlarm();				// actualize alarm register
+		RTCAlarmStandByOn();				// turn on alarm stand-by mode
 		SendStr(g_UARTChannel, "OK\r\n");
 	}
 	else {
@@ -810,7 +809,7 @@ void cmdGetAlarmTime(void) {
 /*
  * Choosing alarm light signalization
  */
-void cmdLightSignalization(void) {
+void cmdSetLightSignal(void) {
 	char c;
 
 	SendStr(g_UARTChannel, "Choose the alarm light signalization 0-3 (0 = no light)\r\n");
@@ -828,7 +827,7 @@ void cmdLightSignalization(void) {
 /*
  * Choosing alarm sound signalization
  */
-void cmdSoundSignalization(void) {
+void cmdSetSoundSignal(void) {
 	char c;
 
 	SendStr(g_UARTChannel, "Choose the alarm sound signalization 0-3 (0 = no sound)\r\n");
@@ -855,7 +854,7 @@ void cmdSetAlarmAgainInterval(void) {
 			"Write the time interval in format: \"hh:mm:ss\"\r\n");
 	for (uint8_t i = 0; i < 8; i++) {
 		if (i == 2 || i == 5) {
-			SendCh(g_UARTChannel, ':');
+			SendCh(g_UARTChannel, ':');		// delimiter auto-appending
 			buf[i] = ':';
 		}
 		else {
